@@ -65,8 +65,9 @@ def learn(network, env,
         rank = 0
 
     nb_actions = env.action_space.shape[-1]
+    print("nb_actions: ", nb_actions)
     assert (np.abs(env.action_space.low) == env.action_space.high).all()  # we assume symmetric actions.
-
+    print("Network_kwargs: \n", network_kwargs)
     memory = Memory(limit=int(100000), action_shape=env.action_space.shape, observation_shape=env.observation_space.shape)
     critic = Critic(load_critic_dagger_path, nb_actions, ob_shape=env.observation_space.shape, network='mlp_rmf_critic', **network_kwargs)
     actor = Actor(load_actor_dagger_path, nb_actions, ob_shape=env.observation_space.shape, network='mlp_rmf_actor', **network_kwargs)

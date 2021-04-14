@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import rospy
 from baselines.common.runners import AbstractEnvRunner
 
 class Runner(AbstractEnvRunner):
@@ -7,7 +8,6 @@ class Runner(AbstractEnvRunner):
     We use this object to make a mini batch of experiences
     __init__:
     - Initialize the runner
-
     run():
     - Make a mini batch
     """
@@ -24,13 +24,22 @@ class Runner(AbstractEnvRunner):
         mb_states = self.states
         epinfos = []
         # For n in range number of steps
+        rospy.sleep(0.2)
         for _ in range(self.nsteps):
             # Given observations, get action value and neglopacs
             # We already have self.obs because Runner superclass run self.obs[:] = env.reset() on init
-            obs = tf.constant(self.obs)
-            actions, values, self.states, neglogpacs = self.model.step(obs)
+            rospy.sleep(0.1)
+            latest_pcl = self.env.envs[0].get_latest_pcl_latent()
+            
+            #print("obs: ", self.obs , "\nlatest_pcl: ", latest_pcl)
+            concatenated_input = np.concatenate((self.obs, [latest_pcl]), axis=1)
+            #concatenated_input = np.reshape(concatenated_input,(1,36))
+            #print("concatenated input: ", concatenated_input)
+
+            total_obs = tf.constant(concatenated_input)
+            actions, values, self.states, neglogpacs = self.model.step(concatenated_input)
             actions = actions._numpy()
-            mb_obs.append(self.obs.copy())
+            mb_obs.append(concatenated_input.copy())
             mb_actions.append(actions)
             mb_values.append(values._numpy())
             mb_neglogpacs.append(neglogpacs._numpy())
@@ -38,7 +47,7 @@ class Runner(AbstractEnvRunner):
 
             # Take actions in env and look the results
             # Infos contains a ton of useful informations
-            self.obs[:], rewards, self.dones, infos = self.env.step(actions)
+            self.obs[:], rewards, self.dones, infos = self.env.step([actions])
             for info in infos:
                 maybeepinfo = info.get('episode')
                 if maybeepinfo: epinfos.append(maybeepinfo)
@@ -51,7 +60,7 @@ class Runner(AbstractEnvRunner):
         mb_values = np.asarray(mb_values, dtype=np.float32)
         mb_neglogpacs = np.asarray(mb_neglogpacs, dtype=np.float32)
         mb_dones = np.asarray(mb_dones, dtype=np.bool)
-        last_values = self.model.value(tf.constant(self.obs))._numpy()
+        last_values = self.model.value(tf.constant(concatenated_input))._numpy()
 
         # discount/bootstrap off value fn
         mb_returns = np.zeros_like(mb_rewards)

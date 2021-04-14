@@ -19,15 +19,14 @@ from planner_msgs.srv import planner_search, planner_searchRequest
 from geometry_msgs.msg import Pose
 
 batch_size = 32
-steps = 3000
+steps = 4000
 nb_training_epoch = 50
-dagger_itr = 50
+dagger_itr = 20
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
 buffer_capacity=50000 # unused now!
 stddev = 0.1
-save_path = "/home/eilefoo/models/dagger"
 
 import tensorflow as tf
 
@@ -143,9 +142,9 @@ def get_teacher_action(planner, controller, augmented_obs, action_space):
         waypoint = path[1].position
         vel_setpoint = np.array([waypoint.x - augmented_obs[0], waypoint.y - augmented_obs[1], waypoint.z - augmented_obs[2]])
         if (len(path) > 5):
-            vel_magnitude = 1.0 / 2
+            vel_magnitude = 1.0
         else:
-            vel_magnitude = (0.15 * (len(path) - 1))/2 
+            vel_magnitude = 0.15 * (len(path) - 1)
         vel_setpoint_norm = np.linalg.norm(vel_setpoint)
         if (vel_setpoint_norm != 0):
             vel_setpoint = vel_setpoint * vel_magnitude / vel_setpoint_norm
@@ -153,7 +152,6 @@ def get_teacher_action(planner, controller, augmented_obs, action_space):
         obs = np.array([waypoint.x - augmented_obs[0], waypoint.y - augmented_obs[1], waypoint.z - augmented_obs[2],
                     vel_setpoint[0] - augmented_obs[3], vel_setpoint[1] - augmented_obs[4], vel_setpoint[2] - augmented_obs[5]])
         action = controller.calculate(obs)
-        #print("Action: ", action)
         action = tf.clip_by_value(action, -1.0, 1.0)
         action = np.array([action])
     elif (len(path) == 1):
@@ -180,23 +178,20 @@ def get_teacher_action(planner, controller, augmented_obs, action_space):
 def build_backbone(layer_input_shape):
     robot_state_input = tf.keras.Input(shape=layer_input_shape)
     # FC layers
-    h1 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
+    h1 = tf.keras.layers.Dense(units=64, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc1', activation='relu')(robot_state_input)
-    h2 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
+    h2 = tf.keras.layers.Dense(units=64, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc2', activation='relu')(h1)
     backbone_model = tf.keras.Model(inputs=robot_state_input, outputs=[h2], name='backbone_net')
     return backbone_model
 
-def build_actor_model(ob_robot_state_shape, ob_pcl_shape, nb_actions):
+def build_actor_model(ob_robot_state_shape, nb_actions):
     #Constructing placeholders
     robot_state_placeholder = np.zeros((1,ob_robot_state_shape))
-    pcl_placeholder = np.zeros((1,ob_pcl_shape))
+    
     #print("Robot placeholder: ", robot_state_placeholder[0])
-    layer_input_placeholder = np.concatenate((robot_state_placeholder, pcl_placeholder), axis=1)
-    print("Input shape ", layer_input_placeholder, "Shape of input shape: ", np.shape(layer_input_placeholder))
-
     # input layer
-    backbone = build_backbone(layer_input_shape=np.shape(layer_input_placeholder))
+    backbone = build_backbone(layer_input_shape=np.shape(robot_state_placeholder))
     # output layer
     output_layer = tf.keras.layers.Dense(units=nb_actions,
                                         name='output',
@@ -297,6 +292,9 @@ if __name__ == '__main__':
     # Initialize
     env = RotorsWrappers()
     planner_service = rospy.ServiceProxy('/gbplanner/search', planner_search)    
+    print("PLanner service:\n\n", planner_service)
+    
+    #load_map()
 
     # Limiting GPU memory growth: https://www.tensorflow.org/guide/gpu
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -312,7 +310,7 @@ if __name__ == '__main__':
             print(e)
 
     #tf.keras.backend.set_floatx('float32')|
-    save_path = "/home/eilefoo/models/dagger"
+    save_path = "/home/eilefoo/models/dagger_only_states"
 
     
     pid = PID([1.0, 1.0, 1.0], [2.0, 2.0, 2.0])
@@ -320,7 +318,7 @@ if __name__ == '__main__':
     nb_obs = env.observation_space.shape[-1]
     print("Shape of obs space: ", env.ob_robot_state_shape, "\nShape of pc: ", env.pcl_latent_dim)
     # actor
-    actor = build_actor_model(ob_robot_state_shape=env.ob_robot_state_shape, ob_pcl_shape=env.pcl_latent_dim, nb_actions=nb_actions)
+    actor = build_actor_model(ob_robot_state_shape=env.ob_robot_state_shape, nb_actions=nb_actions)
     actor.summary()
     if (load_path != None): 
         print('load model from path:', load_path)
@@ -337,19 +335,14 @@ if __name__ == '__main__':
         obs = env.reset()
         reward_sum = 0.0
         itr = 0
-        rospy.sleep(0.5)
+        rospy.sleep(0.3)
 
         while True:
             for i in range(steps):
                 #print('obs:', obs)
-                rospy.sleep(0.1)
-                latest_pcl = env.get_latest_pcl_latent()
-
-                concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
-                concatenated_input = np.reshape(concatenated_input,(36))
-
+                obs_np = np.array([obs])
                 #start = timeit.default_timer()
-                action = actor(concatenated_input, training=False)  # assume symmetric action space (low = -high)
+                action = actor(obs_np, training=False)  # assume symmetric action space (low = -high)
                 print("\nPlaying, action value: ", action*env.action_space.high)
                 #stop = timeit.default_timer()
                 #print('Time for actor prediction: ', stop - start)
@@ -363,7 +356,7 @@ if __name__ == '__main__':
                     episode_rew_queue.appendleft(reward_sum)
                     reward_sum = 0.0
                     obs = env.reset()
-                    rospy.sleep(0.5)
+                    rospy.sleep(0.3)
 
             mean_return = np.mean(episode_rew_queue)
             print('Episode done ', 'itr ', itr, 'mean return', mean_return)
@@ -372,7 +365,6 @@ if __name__ == '__main__':
 
     else: # training mode
         robot_state_all = np.zeros((1,env.ob_robot_state_shape))
-        latent_pcl_all = np.zeros((1,env.pcl_latent_dim))
 
         actions_all = np.zeros((0, nb_actions))
         rewards_all = np.zeros((0, ))
@@ -381,30 +373,27 @@ if __name__ == '__main__':
         augmented_obs_list = []
         action_list = []
         reward_list = []
-        latent_pc_list = []
+
         num_iterations += 1
 
         # Collect data with expert in first iteration
         obs = env.reset()
         augmented_obs = env.get_augmented_obs()
         print("This is the first observation: ", obs)
-        rospy.sleep(0.5)
+        rospy.sleep(0.3)
         print('Collecting data...')
         for i in range(steps):
-            rospy.sleep(0.1)
             counter = 0
             augmented_obs = env.get_augmented_obs()            
             action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)
-            latest_pcl = env.get_latest_pcl_latent()
+
             #print("This is the action from the expert, ", action, "The length is: ", len(action))
             while len(action) == 0:
                 print('no expert path, action is: ', action)
                 #obs = env.reset()
                 #print("The observations after reseting: \n\n\n\n", augmented_obs, "\n\n\n\n")
                 augmented_obs = env.get_augmented_obs()
-                rospy.sleep(0.1)
-                latest_pcl = env.get_latest_pcl_latent()
-                action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)                
+                action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)
                 if (counter > 8):
                     obs = env.reset()
                     augmented_obs = env.get_augmented_obs()
@@ -413,7 +402,6 @@ if __name__ == '__main__':
 
             #Saving the data
             obs_list.append(np.array([obs]))
-            latent_pc_list.append(np.array([latest_pcl]))
             augmented_obs_list.append(augmented_obs)
             action_list.append(np.array(action))
 
@@ -433,33 +421,28 @@ if __name__ == '__main__':
         env.pause()
 
         print('Packing data into arrays...')
-        for obs, act, rew, pc in zip(obs_list, action_list, reward_list, latent_pc_list):
+        for obs, act, rew in zip(obs_list, action_list, reward_list):
             robot_state = obs
-            pcl_feature = pc
+            
             #print("Robot_state: ", robot_state, "Shape of robot_state: ", np.shape(robot_state), "\npcl_feature: ", pcl_feature, "Shape of pcl: ", np.shape(pcl_feature),
             #"\nAction: ", act, "Shape of actions: ", np.shape(act))
             robot_state_all = np.concatenate([robot_state_all, robot_state], axis=0)
-            latent_pcl_all = np.concatenate([latent_pcl_all, pcl_feature], axis=0)
             actions_all = np.concatenate([actions_all, act], axis=0)
             rewards_all = np.concatenate([rewards_all, rew], axis=0)
 
         robot_state_all = np.delete(robot_state_all, 0,0) 
-        latent_pcl_all = np.delete(latent_pcl_all, 0,0)
         
         #print("\nRobot state all: ", robot_state_all)
-        #print("\npcl all: ", latent_pcl_all)        
-
-        # print("Shape of robot state: ", np.shape(robot_state_all), "\nShape of pc: ", np.shape(latent_pcl_all), "\nShape of actions: ", np.shape(actions_all))
-        # concatenated_input = np.concatenate((robot_state_all, latent_pcl_all), axis=1)
-        # print("Shape of the concatenated list: ", np.shape(concatenated_input))
-        # print("robot_state_all: ", robot_state_all)
-        # print("Latent_pc: ", latent_pcl_all)
-        # print("The concatenated list: ", concatenated_input)
-        # print("Shape of one element of concat_input: ", concatenated_input[0].shape, "One elemtent of concaten_: ", concatenated_input[0])
-        # First train for actor network
-        actor.fit(np.concatenate((robot_state_all, latent_pcl_all), axis=1), actions_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=False)
-        output_file = open('results.txt', 'w')
+        #print("\npcl all: ", latent_pcl_all)
         
+
+        #print("Shape of robot state: ", np.shape(robot_state_all), "\nShape of pc: ", np.shape(latent_pcl_all), "\nShape of actions: ", np.shape(actions_all), 
+        #print("Shape of the concatenated list: ", np.shape(concatenated_input))
+        #print("The concatenated list: ", concatenated_input)
+        # First train for actor network
+        actor.fit(robot_state_all, actions_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=1)
+        output_file = open('results.txt', 'w')
+
         early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
 
         env.unpause()
@@ -472,10 +455,8 @@ if __name__ == '__main__':
             augmented_obs_list = []
             action_list = []
             reward_list = []
-            latent_pc_list = []
 
             robot_state_all = np.zeros((1,env.ob_robot_state_shape))
-            latent_pcl_all = np.zeros((1,env.pcl_latent_dim))
             actions_all = np.zeros((0, nb_actions))
             rewards_all = np.zeros((0, ))
             
@@ -486,15 +467,12 @@ if __name__ == '__main__':
             print("\n\nDagger iteration: ", itr, " of ", dagger_itr)
             for i in range(steps):
                 #print('obs:', obs)
-                rospy.sleep(0.1)
-                latest_pcl = env.get_latest_pcl_latent()
 
-                concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
-                concatenated_input = np.reshape(concatenated_input,(1,36))
                 #print("Concatenated input shape: ", np.shape(concatenated_input))
+                obs = np.array([obs])
             
                 #start = timeit.default_timer()
-                action = actor(concatenated_input, training=False)  # assume symmetric action space (low = -high)
+                action = actor(obs, training=False)  # assume symmetric action space (low = -high)
                 #print("Actor actions: ", action*env.action_space.high)
                 #stop = timeit.default_timer()
                 #print('Time for actor prediction: ', stop - start)
@@ -506,10 +484,8 @@ if __name__ == '__main__':
                 augmented_obs = env.get_augmented_obs()
                 obs = new_obs
                 reward_sum += reward
-                print("Iteration: ", i)
 
                 obs_list.append(np.array([obs]))
-                latent_pc_list.append(np.array([latest_pcl]))
                 augmented_obs_list.append(augmented_obs)
                 action_list.append(np.array(action))
 
@@ -533,26 +509,23 @@ if __name__ == '__main__':
             
             print("\n\nRight before packing data \n\n")
 
-            for obs, augmented_obs, pc in zip(obs_list, augmented_obs_list, latent_pc_list):
+            for obs, augmented_obs in zip(obs_list, augmented_obs_list):
                 teacher_action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)
                 #print("Teacher action: ", teacher_action)
                 if len(teacher_action) == 0:
                     print('found no expert path. robot state is: ', augmented_obs[0:3], " goal is: ", obs[0:3])
                     continue
-                #print("Teacher actions is: ", teacher_action ,"Robot state is: ", augmented_obs[0:3], 'goal state is', obs[0:3])
+                print("Teacher actions is: ", teacher_action ,"Robot state is: ", augmented_obs[0:3], 'goal state is', obs[0:3])
                 robot_state = obs
-                pcl_feature = pc
                 #print('robot_state:', robot_state)
                 if (len(actions_all) < dagger_buffer_size):
                     #print("Inside if")
                     robot_state_all = np.concatenate([robot_state_all, robot_state], axis=0)
-                    latent_pcl_all = np.concatenate([latent_pcl_all, pcl_feature], axis=0)
                     actions_all = np.concatenate([actions_all, teacher_action], axis=0)
                 else: # buffer is full
 
                     #print("Inside else")
                     robot_state_all[dagger_buffer_cnt] = robot_state
-                    latent_pcl_all[dagger_buffer_cnt] = pcl_feature
                     actions_all[dagger_buffer_cnt] = teacher_action
                     dagger_buffer_cnt += 1
                     if (dagger_buffer_cnt == dagger_buffer_size):
@@ -561,28 +534,19 @@ if __name__ == '__main__':
 
             #Removing the initialization elements
             robot_state_all = np.delete(robot_state_all, 0,0) 
-            latent_pcl_all = np.delete(latent_pcl_all, 0,0)
-            
-            # print("Shape of robot state: ", np.shape(robot_state_all), "\nShape of pc: ", np.shape(latent_pcl_all), "\nShape of actions: ", np.shape(actions_all))
-            # concatenated_input = np.concatenate((robot_state_all, latent_pcl_all), axis=1)
-            # print("Shape of the concatenated list: ", np.shape(concatenated_input))
-            # print("robot_state_all: ", robot_state_all)
-            # print("Latent_pc: ", latent_pcl_all)
-            # print("The concatenated list: ", concatenated_input)
-            # print("Shape of one element of concat_input: ", concatenated_input[0].shape, "One element of concated_input: ", concatenated_input[0])
+
             # train actor
-            concat_input = np.concatenate((robot_state_all, latent_pcl_all), axis=1)
-            #print(concat_input)
+            print(robot_state_all)
             print("Dagger training for actor")
-            actor.fit(concat_input, actions_all,
+            actor.fit(robot_state_all, actions_all,
                             batch_size=batch_size,
                             epochs=nb_training_epoch,
-                            shuffle=True, verbose=False)
+                            shuffle=True, verbose=True)
                             #validation_split=0.2, verbose=0,
                                     
-        actor.save_weights('dagger_pcl.h5')
+        actor.save_weights('dagger_pcl_state_only.h5')
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_13_04_new_pc_model128_half_speed_30latent.h5')
+            actor.save_weights(save_path + '/dagger_pcl_25_03_state_only.h5')
 

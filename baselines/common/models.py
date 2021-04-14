@@ -29,7 +29,7 @@ def nature_cnn(input_shape, **conv_kwargs):
     return network
 
 @register("mlp")
-def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
+def mlp(num_layers=2, num_hidden=128, activation='relu'):
     """
     Stack of fully-connected layers to be used in a policy / q-function approximator
 
@@ -54,7 +54,7 @@ def mlp(num_layers=2, num_hidden=64, activation=tf.tanh):
         h = x_input
         for i in range(num_layers):
           h = tf.keras.layers.Dense(units=num_hidden, kernel_initializer=ortho_init(np.sqrt(2)),
-                                    name='mlp_fc{}'.format(i), activation=activation)(h)
+                                    name='fcletsgoo{}'.format(i+1), activation=activation)(h)
 
         network = tf.keras.Model(inputs=[x_input], outputs=[h])
         return network

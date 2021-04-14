@@ -1,4 +1,5 @@
-#!/home/huan/anaconda3/envs/tf-gpu/bin/python
+#!/usr/bin/env python
+
 import rospy
 from baselines.common.rotors_wrappers import RotorsWrappers
 
@@ -115,7 +116,9 @@ def build_env(args):
             env = make_vec_env(env_id, env_type, nenv, seed, gamestate=args.gamestate, reward_scale=args.reward_scale)
             env = VecFrameStack(env, frame_stack_size)
     elif env_type == 'rotors':
-        env = make_env(env_id, env_type, seed=seed)
+        env = make_vec_env(env_id, env_type,1, seed=seed)
+        print(env)
+        #env = make_env(env_id, env_type, seed=seed)
     else:
         flatten_dict_observations = alg not in {'her'}
         env = make_vec_env(env_id, env_type, args.num_env or 1, seed, reward_scale=args.reward_scale, flatten_dict_observations=flatten_dict_observations)
@@ -226,6 +229,9 @@ def main(args):
     else:
         rank = MPI.COMM_WORLD.Get_rank()
         configure_logger(args.log_path, format_strs=[])
+
+    print("Inside run.py \n\n\n\n")
+    print("Arguments: ", args, "\nExtra arguments: ", extra_args)
 
     model, env = train(args, extra_args)
 

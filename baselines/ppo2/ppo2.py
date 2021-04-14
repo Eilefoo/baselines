@@ -17,16 +17,14 @@ def constfn(val):
         return val
     return f
 
-def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2048, ent_coef=0.0, lr=3e-4,
+def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=20, ent_coef=0.0, lr=3e-4,
             vf_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
             log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
             save_interval=0, load_path=None, model_fn=None, **network_kwargs):
     '''
     Learn policy using PPO algorithm (https://arxiv.org/abs/1707.06347)
-
     Parameters:
     ----------
-
     network:                          policy network architecture. Either string (mlp, lstm, lnlstm, cnn_lstm, cnn, cnn_small, conv_only - see baselines.common/models.py for full list)
                                       specifying the standard network architecture, or a function that takes tensorflow tensor as input and returns
                                       tuple (output_tensor, extra_feed) where output tensor is the last network layer output, extra_feed is None for feed-forward
@@ -35,7 +33,6 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
 
     env: baselines.common.vec_env.VecEnv     environment. Needs to be vectorized for parallel environment simulation.
                                       The environments produced by gym.make can be wrapped using baselines.common.vec_env.DummyVecEnv class.
-
 
     nsteps: int                       number of steps of the vectorized environment per update (i.e. batch size is nsteps * nenv where
                                       nenv is number of environment copies simulated in parallel)
@@ -68,12 +65,9 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
     save_interval: int                number of timesteps between saving events
 
     load_path: str                    path to load the model from
-
+    
     **network_kwargs:                 keyword arguments to the policy / network builder. See baselines.common/policies.py/build_policy and arguments to a particular type of network
                                       For instance, 'mlp' network architecture has arguments num_hidden and num_layers.
-
-
-
     '''
 
     set_global_seeds(seed)
@@ -88,13 +82,14 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
     nenvs = env.num_envs
 
     # Get state_space and action_space
-    ob_space = env.observation_space
+    print("Environment: ", env, "\nObservation space: ", env.observation_space)
+    ob_space = env.envs[0].total_env_obs
     ac_space = env.action_space
 
     if isinstance(network, str):
         network_type = network
-        policy_network_fn = get_network_builder(network_type)(**network_kwargs)
-        network = policy_network_fn(ob_space.shape)
+        policy_network_fn = get_network_builder(network_type)()#**network_kwargs)
+        network = policy_network_fn(ob_space)
 
     # Calculate the batch_size
     nbatch = nenvs * nsteps
@@ -196,5 +191,3 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
 # Avoid division error when calculate the mean (in our case if epinfo is empty returns np.nan, not return an error)
 def safemean(xs):
     return np.nan if len(xs) == 0 else np.mean(xs)
-
-

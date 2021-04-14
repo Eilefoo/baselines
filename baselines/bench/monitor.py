@@ -15,10 +15,13 @@ class Monitor(Wrapper):
         Wrapper.__init__(self, env=env)
         self.tstart = time.time()
         if filename:
-            self.results_writer = ResultsWriter(filename,
-                header={"t_start": time.time(), 'env_id' : env.spec and env.spec.id},
-                extra_keys=reset_keywords + info_keywords
-            )
+            
+            # self.results_writer = ResultsWriter(filename,
+            #     header={"t_start": time.time(), 'env_id' : env.spec and env.spec.id},
+            #     extra_keys=reset_keywords + info_keywords
+            # )
+            pass
+
         else:
             self.results_writer = None
         self.reset_keywords = reset_keywords
@@ -51,6 +54,7 @@ class Monitor(Wrapper):
     def step(self, action):
         if self.needs_reset:
             raise RuntimeError("Tried to step environment that needs reset")
+        print("Action step: ", [action])
         ob, rew, done, info = self.env.step(action)
         self.update(ob, rew, done, info)
         return (ob, rew, done, info)
