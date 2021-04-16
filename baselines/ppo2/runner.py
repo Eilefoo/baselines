@@ -44,7 +44,7 @@ class Runner(AbstractEnvRunner):
             mb_values.append(values._numpy())
             mb_neglogpacs.append(neglogpacs._numpy())
             mb_dones.append(self.dones)
-
+            print("total obs: ", total_obs, "\nAction: ", [actions])
             # Take actions in env and look the results
             # Infos contains a ton of useful informations
             self.obs[:], rewards, self.dones, infos = self.env.step([actions])

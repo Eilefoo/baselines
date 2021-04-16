@@ -4,7 +4,7 @@ from baselines.common.distributions import make_pdtype
 from baselines.dagger.dagger import build_actor_model
 import gym
 
-DAGGER_ACTOR_WEIGHT = '/home/eilefoo/models/dagger/dagger_pcl_7_04_new_pc_model128_half_speed.h5'
+DAGGER_ACTOR_WEIGHT = '/home/eilefoo/models/dagger/dagger_pcl_13_04_new_pc_model128_half_speed_30latent.h5'
 
 class PolicyWithValue(tf.Module):
     """
@@ -39,7 +39,7 @@ class PolicyWithValue(tf.Module):
         self.initial_state = None
 
         # Based on the action space, will select what probability distribution type
-        self.pdtype = make_pdtype(policy_network.output_shape, ac_space, init_scale=0.01, activation='relu')
+        self.pdtype = make_pdtype(policy_network.output_shape, ac_space, init_scale=1, activation=tf.keras.activations.tanh) #init_scale = 0.01
         self.pdtype.matching_fc.set_weights(self.dagger_model.get_layer('output').get_weights())
 
         if estimate_q:
@@ -65,6 +65,7 @@ class PolicyWithValue(tf.Module):
         action = pd.sample()
         #action = pi # when play
         neglogp = pd.neglogp(action)
+        action = tf.clip_by_value(action, -1.0, 1.0)
         value_latent = self.value_network([observation])
         vf = tf.squeeze(self.value_fc(value_latent), axis=1)
         return action, vf, None, neglogp

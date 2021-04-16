@@ -3,6 +3,7 @@ __all__ = ['Monitor', 'get_monitor_files', 'load_results']
 from gym.core import Wrapper
 import time
 from glob import glob
+import tensorflow as tf
 import csv
 import os.path as osp
 import json
@@ -55,6 +56,7 @@ class Monitor(Wrapper):
         if self.needs_reset:
             raise RuntimeError("Tried to step environment that needs reset")
         print("Action step: ", [action])
+        #action = tf.clip_by_value(action, -1.0, 1.0) #Eilef
         ob, rew, done, info = self.env.step(action)
         self.update(ob, rew, done, info)
         return (ob, rew, done, info)

@@ -459,19 +459,19 @@ class RotorsWrappers:
 
         # print("Goal number: ", self.goal_num, "Goal list: ", self.goal_list)
         # goal_coord = self.goal_list[self.goal_num]
-        # goal.position.x = goal_coord[0]
-        # goal.position.y = goal_coord[1]
-        # goal.position.z = goal_coord[2]
+        # goal.position.x = -5
+        # goal.position.y = 0
+        # goal.position.z = 0
         # goal.orientation.x = 0
         # goal.orientation.y = 0
         # goal.orientation.z = 0
         # goal.orientation.w = 1        
         # rospy.loginfo_throttle(2, 'New Goal: (%.3f , %.3f , %.3f)', goal.position.x,  goal.position.y,  goal.position.z)
         # r = 5
-        # Convert this goal into the world frame and set it as the current goal
-        # robot_odom = Odometry()
-        # robot_odom.pose.pose = robot_pose
-        # #current_goal = self.transform_goal_to_world_frame(robot_odom, goal)
+        # # Convert this goal into the world frame and set it as the current goal
+        # # robot_odom = Odometry()
+        # # robot_odom.pose.pose = robot_pose
+        # # #current_goal = self.transform_goal_to_world_frame(robot_odom, goal)
         # current_goal = goal #it is in world frame
         # self.get_goal_coordinates(current_goal.position) #Eilef
         return current_goal, r
@@ -559,7 +559,7 @@ class RotorsWrappers:
         self.current_goal = goal
         self.draw_new_goal(goal)
         self.goal_training_publisher.publish(goal)
-        self.reset_timer(r * 3)
+        self.reset_timer(r * 2)
 
         obs = self.get_new_obs()
         return obs        
@@ -622,9 +622,9 @@ class RotorsWrappers:
             # new_position.pose.position.x = state_init[0]
             # new_position.pose.position.y = state_init[1]
             # new_position.pose.position.z = state_init[2] #When training Eilef
-            new_position.pose.position.x = 10.0
+            new_position.pose.position.x = 0.0
             new_position.pose.position.y = 0.0 #When testing Eilef
-            new_position.pose.position.z = 2.0
+            new_position.pose.position.z = 5.0
             
             new_position.pose.orientation.x = 0
             new_position.pose.orientation.y = 0

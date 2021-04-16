@@ -21,7 +21,7 @@ from geometry_msgs.msg import Pose
 batch_size = 32
 steps = 3000
 nb_training_epoch = 50
-dagger_itr = 50
+dagger_itr = 30
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
@@ -142,10 +142,10 @@ def get_teacher_action(planner, controller, augmented_obs, action_space):
     if (len(path) > 1):
         waypoint = path[1].position
         vel_setpoint = np.array([waypoint.x - augmented_obs[0], waypoint.y - augmented_obs[1], waypoint.z - augmented_obs[2]])
-        if (len(path) > 5):
+        if (len(path) > 5): #5
             vel_magnitude = 1.0 / 2
         else:
-            vel_magnitude = (0.15 * (len(path) - 1))/2 
+            vel_magnitude = (0.15 * (len(path) - 1))
         vel_setpoint_norm = np.linalg.norm(vel_setpoint)
         if (vel_setpoint_norm != 0):
             vel_setpoint = vel_setpoint * vel_magnitude / vel_setpoint_norm
@@ -184,7 +184,9 @@ def build_backbone(layer_input_shape):
                                 name='fc1', activation='relu')(robot_state_input)
     h2 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc2', activation='relu')(h1)
-    backbone_model = tf.keras.Model(inputs=robot_state_input, outputs=[h2], name='backbone_net')
+    h3 = tf.keras.layers.Dense(units=64, kernel_initializer=ortho_init(np.sqrt(2)),
+                                name='fc3', activation='relu')(h2)
+    backbone_model = tf.keras.Model(inputs=robot_state_input, outputs=[h3], name='backbone_net')
     return backbone_model
 
 def build_actor_model(ob_robot_state_shape, ob_pcl_shape, nb_actions):
@@ -346,7 +348,7 @@ if __name__ == '__main__':
                 latest_pcl = env.get_latest_pcl_latent()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
-                concatenated_input = np.reshape(concatenated_input,(36))
+                concatenated_input = np.reshape(concatenated_input,(1,6 + env.pcl_latent_dim))
 
                 #start = timeit.default_timer()
                 action = actor(concatenated_input, training=False)  # assume symmetric action space (low = -high)
@@ -388,7 +390,7 @@ if __name__ == '__main__':
         obs = env.reset()
         augmented_obs = env.get_augmented_obs()
         print("This is the first observation: ", obs)
-        rospy.sleep(0.5)
+        rospy.sleep(0.3)
         print('Collecting data...')
         for i in range(steps):
             rospy.sleep(0.1)
@@ -402,10 +404,11 @@ if __name__ == '__main__':
                 #obs = env.reset()
                 #print("The observations after reseting: \n\n\n\n", augmented_obs, "\n\n\n\n")
                 augmented_obs = env.get_augmented_obs()
+                counter = counter + 1
                 rospy.sleep(0.1)
                 latest_pcl = env.get_latest_pcl_latent()
                 action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)                
-                if (counter > 8):
+                if (counter > 7):
                     obs = env.reset()
                     augmented_obs = env.get_augmented_obs()
                     rospy.sleep(0.3)
@@ -584,5 +587,5 @@ if __name__ == '__main__':
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_13_04_new_pc_model128_half_speed_30latent.h5')
+            actor.save_weights(save_path + '/dagger_pcl_15_04_new_pc_model128_128_64_half_speed_30latent.h5')
 
