@@ -4,7 +4,7 @@ from baselines.common.distributions import make_pdtype
 from baselines.dagger.dagger import build_actor_model
 import gym
 
-DAGGER_ACTOR_WEIGHT = '/home/eilefoo/models/dagger/dagger_pcl_13_04_new_pc_model128_half_speed_30latent.h5'
+DAGGER_ACTOR_WEIGHT = '/home/eilefoo/models/dagger/dagger_pcl_17_04_new_pc_model128_128_64_half_speed_30latent_best_new_after_Huan.h5'
 
 class PolicyWithValue(tf.Module):
     """

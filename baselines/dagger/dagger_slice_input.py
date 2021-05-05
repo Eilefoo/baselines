@@ -16,14 +16,12 @@ import timeit
 from baselines.ddpg.noise import AdaptiveParamNoiseSpec, NormalActionNoise, OrnsteinUhlenbeckActionNoise
 from collections import deque
 from planner_msgs.srv import planner_search, planner_searchRequest
-from std_srvs.srv import Empty
-from voxblox_msgs.srv import FilePath
 from geometry_msgs.msg import Pose
 
 batch_size = 32
-steps = 20000
+steps = 3000
 nb_training_epoch = 50
-dagger_itr = 0
+dagger_itr = 30
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
@@ -31,6 +29,7 @@ buffer_capacity=50000 # unused now!
 stddev = 0.1
 save_path = "/home/eilefoo/models/dagger"
 
+import tensorflow as tf
 
 class Buffer:
     def __init__(self, buffer_capacity=100000, batch_size=64):
@@ -163,43 +162,44 @@ def get_teacher_action(planner, controller, augmented_obs, action_space):
         action = np.array([])        
     return action
 
-# def pcl_encoder(input_shape):
-#     print('pcl_encoder input shape is {}'.format(input_shape))
-#     inputs = tf.keras.Input(shape=input_shape[0] * input_shape[1] * input_shape[2])
-#     x = tf.keras.layers.Reshape((input_shape[0], input_shape[1], input_shape[2]))(inputs)
-#     x = tf.keras.layers.Conv2D(8, (3, 3), activation='relu', padding='same', name='conv1')(x)
-#     x = tf.keras.layers.MaxPooling2D((2, 3), padding='same', name='pool1')(x)
-#     x = tf.keras.layers.Conv2D(16, (3, 3), activation='relu', padding='same', name='conv2')(x)
-#     x = tf.keras.layers.MaxPooling2D((2, 3), padding='same', name='pool2')(x)
-#     # Generate the latent vector
-#     latent = tf.keras.layers.Flatten()(x)
-#     encoder = tf.keras.Model(inputs, latent, name='encoder')
-#     #encoder.summary()
-#     return encoder
+def pcl_encoder(input_shape):
+    print('pcl_encoder input shape is {}'.format(input_shape))
+    inputs = tf.keras.Input(shape=input_shape[0] * input_shape[1] * 1)
+    x = tf.keras.layers.Reshape((input_shape[0], input_shape[1], 1))(inputs)
+    x = tf.keras.layers.Conv2D(8, (3, 3), activation='relu', padding='same', name='conv1')(x)
+    x = tf.keras.layers.MaxPooling2D((2, 3), padding='same', name='pool1')(x)
+    x = tf.keras.layers.Conv2D(16, (3, 3), activation='relu', padding='same', name='conv2')(x)
+    x = tf.keras.layers.MaxPooling2D((2, 3), padding='same', name='pool2')(x)
+    # Generate the latent vector
+    latent = tf.keras.layers.Flatten()(x)
+    encoder = tf.keras.Model(inputs, latent, name='encoder')
+    #encoder.summary()
+    return encoder
 
 # build network
-def build_backbone(layer_input_shape):
+def build_backbone(layer_input_shape, ob_pcl_shape):
     robot_state_input = tf.keras.Input(shape=layer_input_shape)
     # FC layers
+    pcl_encoder_submodel = pcl_encoder(input_shape=ob_pcl_shape)
+
+    x = tf.keras.layers.concatenate([robot_state_input, pcl_encoder_submodel.outputs[0]])
+
     h1 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
-                                name='fc1', activation='relu')(robot_state_input)
+                                name='fc1', activation='relu')(x)
     h2 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc2', activation='relu')(h1)
     h3 = tf.keras.layers.Dense(units=64, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc3', activation='relu')(h2)
-    backbone_model = tf.keras.Model(inputs=robot_state_input, outputs=[h3], name='backbone_net')
+    backbone_model = tf.keras.Model(inputs=[robot_state_input, pcl_encoder_submodel.inputs[0]], outputs=[h3], name='backbone_net')
     return backbone_model
 
 def build_actor_model(ob_robot_state_shape, ob_pcl_shape, nb_actions):
     #Constructing placeholders
     robot_state_placeholder = np.zeros((1,ob_robot_state_shape))
-    pcl_placeholder = np.zeros((1,ob_pcl_shape))
-    #print("Robot placeholder: ", robot_state_placeholder[0])
-    layer_input_placeholder = np.concatenate((robot_state_placeholder, pcl_placeholder), axis=1)
-    print("Input shape ", layer_input_placeholder, "Shape of input shape: ", np.shape(layer_input_placeholder))
-
+    ob_pcl_placeholder = np.zeros((64,64)) #image size
     # input layer
-    backbone = build_backbone(layer_input_shape=np.shape(layer_input_placeholder))
+    backbone = build_backbone(layer_input_shape=np.shape(robot_state_placeholder), ob_pcl_shape=np.shape(ob_pcl_placeholder))
+
     # output layer
     output_layer = tf.keras.layers.Dense(units=nb_actions,
                                         name='output',
@@ -268,10 +268,11 @@ def update_target(tau):
 
     target_critic.set_weights(new_weights)
 
-def load_map(load_path):
+def load_map():
     #rosservice call /gbplanner_node/load_map "file_path: '/home/eilefoo/reinforcement_learning_ws/src/rmf_sim/voxblox_simple_maze.tsdf'"
     try:
-        response = map_load_service(load_path)
+        map_load_service = rospy.ServiceProxy('/gbplanner_node/load_map',load_map)
+        response = map_load_service("file_path: '/home/eilefoo/reinforcement_learning_ws/src/rmf_sim/voxblox_simple_maze.tsdf'")
     except rospy.ServiceException as e:
         print("Service call failed: %s"%e)
 
@@ -296,17 +297,9 @@ if __name__ == '__main__':
         if (index != -1):
             save_path = sys.argv[i][12:]
             continue
-        index = sys.argv[i].find('--world_scramble')
-        if (index != -1):
-            world_scramble = True
-            continue
-        
     # Initialize
     env = RotorsWrappers()
     planner_service = rospy.ServiceProxy('/gbplanner/search', planner_search)    
-    map_load_service = rospy.ServiceProxy('/gbplanner_node/load_map',FilePath)
-    map_clear_service = rospy.ServiceProxy('/gbplanner_node/clear_map',Empty)
-
 
     # Limiting GPU memory growth: https://www.tensorflow.org/guide/gpu
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -323,6 +316,7 @@ if __name__ == '__main__':
 
     #tf.keras.backend.set_floatx('float32')|
     save_path = "/home/eilefoo/models/dagger"
+
     
     pid = PID([1.0, 1.0, 1.0], [2.0, 2.0, 2.0])
     nb_actions = env.action_space.shape[-1]
@@ -339,7 +333,6 @@ if __name__ == '__main__':
 
     episode_rew_queue = deque(maxlen=10)
 
-    env_reset_counter = 0 
     num_iterations = 0
 
     max_mean_return = -100000
@@ -348,17 +341,12 @@ if __name__ == '__main__':
         reward_sum = 0.0
         itr = 0
         rospy.sleep(0.5)
-        env.pause()
-        tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-        scrambler_bool = env.scramble_world()
 
-        env_reset_counter = 0
-        env.unpause()
         while True:
             for i in range(steps):
                 #print('obs:', obs)
                 rospy.sleep(0.1)
-                latest_pcl = env.get_latest_pcl_latent()
+                latest_pcl = env.get_latest_pc_slice()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
                 concatenated_input = np.reshape(concatenated_input,(1,6 + env.pcl_latent_dim))
@@ -375,14 +363,6 @@ if __name__ == '__main__':
                 reward_sum += reward
 
                 if done is True:
-                    env_reset_counter = env_reset_counter +1
-                    if (env_reset_counter > 1): 
-                        env.pause()
-
-                        scrambler_bool = env.scramble_world()
-                        env_reset_counter = 0
-                        env.unpause()
-
                     episode_rew_queue.appendleft(reward_sum)
                     reward_sum = 0.0
                     obs = env.reset()
@@ -406,15 +386,7 @@ if __name__ == '__main__':
         reward_list = []
         latent_pc_list = []
         num_iterations += 1
-        
-        tsdf_filename = "/home/eilefoo/maps/random_generated_maps/random_1.tsdf"
-        env.pause()
-        scrambler_bool = env.scramble_world()
-        world_converter_bool = env.world_to_tsdf_converter(tsdf_filename)
-        map_clear_service()
-        map_load_service(tsdf_filename)
-        env.unpause()
-        env_reset_counter = 0
+
         # Collect data with expert in first iteration
         obs = env.reset()
         augmented_obs = env.get_augmented_obs()
@@ -442,6 +414,7 @@ if __name__ == '__main__':
                     augmented_obs = env.get_augmented_obs()
                     rospy.sleep(0.3)
 
+
             #Saving the data
             obs_list.append(np.array([obs]))
             latent_pc_list.append(np.array([latest_pcl]))
@@ -456,32 +429,19 @@ if __name__ == '__main__':
             
             reward_list.append(np.array([reward]))
             print("Iteration: ", i)
-
             if done:
-                env_reset_counter = env_reset_counter +1
-                if (env_reset_counter > 1): 
-                    env.pause()
-                    tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-                    scrambler_bool = env.scramble_world()
-                    world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
-                    print("The world_converter_bool came back: ", world_to_tsdf_bool)
-                    map_clear_service()
-                    map_load_service(tsdf_filename)
-                    env_reset_counter = 0
-                    env.unpause()
-
                 obs = env.reset()
                 augmented_obs = env.get_augmented_obs()
                 rospy.sleep(0.3)
+
         env.pause()
 
         print('Packing data into arrays...')
         for obs, act, rew, pc in zip(obs_list, action_list, reward_list, latent_pc_list):
             robot_state = obs
             pcl_feature = pc
-            print("Robot_state: ", robot_state, "Shape of robot_state: ", np.shape(robot_state), "\npcl_feature: ", pcl_feature, "Shape of pcl: ", np.shape(pcl_feature),
-            "\nAction: ", act, "Shape of actions: ", np.shape(act))
-            print("Actions_all: ", actions_all)
+            #print("Robot_state: ", robot_state, "Shape of robot_state: ", np.shape(robot_state), "\npcl_feature: ", pcl_feature, "Shape of pcl: ", np.shape(pcl_feature),
+            #"\nAction: ", act, "Shape of actions: ", np.shape(act))
             robot_state_all = np.concatenate([robot_state_all, robot_state], axis=0)
             latent_pcl_all = np.concatenate([latent_pcl_all, pcl_feature], axis=0)
             actions_all = np.concatenate([actions_all, act], axis=0)
@@ -534,7 +494,7 @@ if __name__ == '__main__':
                 latest_pcl = env.get_latest_pcl_latent()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
-                concatenated_input = np.reshape(concatenated_input,(1,56))
+                concatenated_input = np.reshape(concatenated_input,(1,36))
                 #print("Concatenated input shape: ", np.shape(concatenated_input))
             
                 #start = timeit.default_timer()
@@ -560,20 +520,6 @@ if __name__ == '__main__':
                 if done or i == steps-1:
                     episode_rew_queue.appendleft(reward_sum)
                     reward_sum = 0
-                    
-                    env_reset_counter = env_reset_counter +1
-                    if (env_reset_counter >=1): 
-                        env.pause()
-                        tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-                        scrambler_bool = env.scramble_world()
-                        world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
-                        print("The world_converter_bool came back: ", world_to_tsdf_bool)
-                        map_clear_service()
-                        map_load_service(tsdf_filename)
-                        env_reset_counter = 0
-                        env.unpause()
-
-                    
                     obs = env.reset()
                     augmented_obs = env.get_augmented_obs()
                     rospy.sleep(0.3) #Wait for pointcloud 
@@ -642,5 +588,5 @@ if __name__ == '__main__':
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_04_05_model128_128_64_30latent.h5')
+            actor.save_weights(save_path + '/dagger_pcl_15_04_new_pc_model128_128_64_half_speed_30latent.h5')
 

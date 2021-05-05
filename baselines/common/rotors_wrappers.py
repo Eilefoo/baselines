@@ -8,10 +8,13 @@ from mav_msgs.msg import RateThrust
 from nav_msgs.msg import Odometry
 from geometry_msgs.msg import Pose
 from gazebo_msgs.msg import ContactsState, ModelState
-from std_srvs.srv import Empty, EmptyRequest
+from std_srvs.srv import Empty, EmptyRequest, Trigger, TriggerResponse
+from voxblox_msgs.srv import FilePath
 from visualization_msgs.msg import Marker
 from visualization_msgs.msg import MarkerArray
-from std_msgs.msg import Float64MultiArray
+from std_msgs.msg import Float64MultiArray, Float32
+from sensor_msgs.msg import Image
+
 
 from pointcloud_utils.msg import LatSpace
 
@@ -28,6 +31,7 @@ import pandas as pd
 PCL_FEATURE_SIZE = 1440
 
 OB_ROBOT_STATE_SHAPE = 6
+
 
 class RotorsWrappers:
     def __init__(self):
@@ -49,10 +53,14 @@ class RotorsWrappers:
 
         self.ob_robot_state_shape = OB_ROBOT_STATE_SHAPE        
         
-        self.pcl_latent_dim = 30 #Eilef
+        self.pcl_latent_dim = 50 #Eilef
         self.pcl_latent_stack = [] 
+        self.pc_slice_stack = [] 
+
         self.total_env_obs = self.ob_robot_state_shape + self.pcl_latent_dim
         self.collide2 = False
+
+        self.evaluate = True #Should the trajectories be evaluated?
 
         self.done = False
         self.timeout = False
@@ -62,6 +70,18 @@ class RotorsWrappers:
         self.msg_cnt = 0
         self.pcl_feature = np.array([])
         self.num_envs = 1 #For ppo2 implementation
+
+        if(self.evaluate):
+            self.recent_binary_crossentropy_list = [0,0,0,0,0] #5 elements
+            self.binary_crossentropy_threshold = 0.4 #The thresholding for deciding if a collision is the fault of the agent or the encoder
+            self.encoder_collison_counter = 0 #For keeping track of the number og collisons with higher than the binary_crossentropy_threshold
+            self.agent_collison_counter = 0
+            self.encoder_collision_list = []
+            self.agent_collision_list =  []
+            self.total_collisions = 0 
+            self.total_goal_reached = 0 
+            self.total_timeouts = 0 
+
         self.results_writer = False
         self.sleep_rate = rospy.Rate(self.control_rate)
 
@@ -85,6 +105,11 @@ class RotorsWrappers:
         self.contact_collision_check_subcriber = rospy.Subscriber("/delta_collision_check/delta_collision_check_contact", ContactsState, self.contact_collision_check_callback)
 
         self.pc_latent_subscriber = rospy.Subscriber("/delta/pc_latent_space", LatSpace, self.pc_latent_callback) #Eilef
+        self.shortest_distance_subscriber = rospy.Subscriber("/delta/shortest_distance", Float32,self.shortest_dist_callback)#Eilef
+        if(self.evaluate):
+            self.binary_crossentropy_subscriber = rospy.Subscriber("/delta/bin_entropy", Float32,self.binary_crossentropy_callback)#Eilef
+
+        #self.pc_slice_subscriber = rospy.Subscriber("/pc_slice", Image, self.pc_slice_callback) #Eilef
         self.goal_robot2_init_publisher = rospy.Publisher("/delta_collision_check/goal", Pose)
 
         self.goal_training_publisher = rospy.Publisher("/delta/goal_training", Pose)
@@ -98,6 +123,9 @@ class RotorsWrappers:
 
         self.pause_physics_proxy = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
         self.unpause_physics_proxy = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
+        self.reset_tsdf_service = rospy.ServiceProxy('/tsdf_server/clear_map', Empty)
+        self.world_scramble_service = rospy.ServiceProxy('/world_randomize_service', Trigger)
+        self.world_to_tsdf_converter_service = rospy.ServiceProxy('/gazebo/save_voxblox_ground_truth_to_file', FilePath)
         
         self.robot2_pose = Pose()
         self.robot2_pose.position.x = self.max_wp_x + 5.0
@@ -116,6 +144,23 @@ class RotorsWrappers:
         #rospy.loginfo("PC_Latent_callback timer")
         self.pcl_latent_stack.append(data.latent_space)
 
+    def pc_slice_callback(self,image):
+        #rospy.loginfo("PC_slice_callback timer")
+        self.pc_slice_stack.append(int.from_bytes(image.data,'big'))
+        print("pc_sliceCallback " , int.from_bytes(image.data,'big'))
+
+    def shortest_dist_callback(self,msg):
+        self.shortest_distance = msg.data
+        print("Shortest distance: ",self.shortest_distance)
+
+    def binary_crossentropy_callback(self,new_crossentropy_msg):
+        self.recent_binary_crossentropy_list[0:4] = self.recent_binary_crossentropy_list[1:4]
+        self.recent_binary_crossentropy_list.append(new_crossentropy_msg.data)
+        print("Updated binary_crossentropy_list: ", self.recent_binary_crossentropy_list)
+
+    def get_latest_pc_slice(self):
+        return self.pc_slice_stack.pop()
+
 
     def get_latest_pcl_latent(self):
         return self.pcl_latent_stack.pop()
@@ -128,7 +173,7 @@ class RotorsWrappers:
         return [seed]
 
     def get_params(self):
-        self.initial_goal_generation_radius = rospy.get_param('initial_goal_generation_radius', 7.0)
+        self.initial_goal_generation_radius = rospy.get_param('initial_goal_generation_radius', 5.0)
         self.set_goal_generation_radius(self.initial_goal_generation_radius)
         self.waypoint_radius = rospy.get_param('waypoint_radius', 0.2)
         self.robot_collision_frame = rospy.get_param(
@@ -160,20 +205,21 @@ class RotorsWrappers:
         self.max_acc_y = rospy.get_param('max_acc_y', 1.0)
         self.max_acc_z = rospy.get_param('max_acc_z', 1.0)
 
-        self.max_wp_x = rospy.get_param('max_waypoint_x', 8.0)
+        self.max_wp_x = rospy.get_param('max_waypoint_x', 30.0)
         self.max_wp_y = rospy.get_param('max_waypoint_y', 2.5)
-        self.max_wp_z = rospy.get_param('max_waypoint_z', 4.0) 
+        self.max_wp_z = rospy.get_param('max_waypoint_z', 5.0) 
 
-        self.min_wp_x = rospy.get_param('min_waypoint_x', -5.0)
+        self.min_wp_x = rospy.get_param('min_waypoint_x', -30.0)
         self.min_wp_y = rospy.get_param('min_waypoint_y', -2.5)
         self.min_wp_z = rospy.get_param('min_waypoint_z', 2.0)                
 
         self.min_init_z = rospy.get_param('min_initial_z', 2.0)
-        self.max_init_z = rospy.get_param('max_initial_z', 5.0)
+        self.max_init_z = rospy.get_param('max_initial_z', 4.0)
 
         self.control_rate = rospy.get_param('control_rate', 20.0)
 
         self.spec = "rotors"
+
     def get_augmented_obs(self):
         current_pos = self.robot_odom[0].pose.pose.position
         current_vel = self.robot_odom[0].twist.twist.linear
@@ -195,6 +241,26 @@ class RotorsWrappers:
                     #self.reset()
             else:
                 rospy.logdebug('Contact robot2 not found yet ...')           
+
+    def scramble_world(self):
+        try:
+            response = self.world_scramble_service()
+            print("World scrambler response: ", response, "\n")
+            return True
+        except rospy.ServiceException as e:
+            print("World scrambler service call failed: %s"%e)
+            return False
+
+    def world_to_tsdf_converter(self,save_path):
+        msg = save_path
+        try:
+            response = self.world_to_tsdf_converter_service(msg)
+            print("Tsdf converter response: ", response, "\n")
+            return True
+        except rospy.ServiceException as e:
+            print("world to tsdf converter service call failed: %s"%e)
+            return False
+
 
     def step(self, action):
         command = RateThrust()
@@ -223,7 +289,7 @@ class RotorsWrappers:
 
         Ru = self.R_action.dot(action)
         uT_Ru = action.transpose().dot(Ru) / 1000.0
-        reward = - uT_Ru
+        reward = - uT_Ru #- self.shortest_distance * 0.1
         #reward = -0.01
         info = {'status':'none'}
         self.done = False        
@@ -232,6 +298,8 @@ class RotorsWrappers:
         if (np.linalg.norm(new_obs[0:3]) < self.waypoint_radius and (np.linalg.norm(new_obs[3:6]) < 0.3)):
             reward = reward + self.goal_reward - xT_Qx 
             self.done = True
+            if(self.evaluate):
+                self.total_goal_reached = self.total_goal_reached +1
             print("Reached goal")
             info = {'status':'reach goal'}
         else:
@@ -241,6 +309,18 @@ class RotorsWrappers:
         # collide?
         if self.collide:
             self.collide = False
+            if(self.evaluate):
+                average_bin_entropy = sum(self.recent_binary_crossentropy_list)/len(self.recent_binary_crossentropy_list)
+                self.total_collisions = self.total_collisions +1
+                if(average_bin_entropy >= self.binary_crossentropy_threshold):
+                    print("The environment was poorly represented at the time of collison with entropy of: ", average_bin_entropy)
+                    self.encoder_collison_counter = self.encoder_collison_counter +1 
+                    self.encoder_collision_list.append(average_bin_entropy)
+                else:
+                    print("At the time of collision the environment around the drone was well represented with an entropy of: ", average_bin_entropy)
+                    self.agent_collison_counter = self.agent_collison_counter +1
+                    self.agent_collision_list.append(average_bin_entropy)
+                
             reward = reward - self.obstacle_max_penalty
             self.done = True
             print("Collision occured")
@@ -250,6 +330,8 @@ class RotorsWrappers:
         if self.timeout:
             self.timeout = False
             self.done = True
+            if(self.evaluate):
+                self.total_timeouts = self.total_timeouts +1 
             print("Timeout")
             info = {'status':'timeout'}
 
@@ -459,8 +541,8 @@ class RotorsWrappers:
 
         # print("Goal number: ", self.goal_num, "Goal list: ", self.goal_list)
         # goal_coord = self.goal_list[self.goal_num]
-        # goal.position.x = -5
-        # goal.position.y = 0
+        # goal.position.x = 7.5
+        # goal.position.y = -5
         # goal.position.z = 0
         # goal.orientation.x = 0
         # goal.orientation.y = 0
@@ -555,11 +637,18 @@ class RotorsWrappers:
 
         # put the robot at the start pose
         self.spawn_robot(start_pose)
+        try:
+            response = self.reset_tsdf_service()
+            print("reset tsdf response: ", response, "\n")
+        except rospy.ServiceException as e:
+            print("Service call failed: %s"%e)
+
+
         print("The robot pose is: ", start_pose, "\nThe goal pose is: ", goal)
         self.current_goal = goal
         self.draw_new_goal(goal)
         self.goal_training_publisher.publish(goal)
-        self.reset_timer(r * 2)
+        self.reset_timer(r * 2.5)
 
         obs = self.get_new_obs()
         return obs        
@@ -622,8 +711,8 @@ class RotorsWrappers:
             # new_position.pose.position.x = state_init[0]
             # new_position.pose.position.y = state_init[1]
             # new_position.pose.position.z = state_init[2] #When training Eilef
-            new_position.pose.position.x = 0.0
-            new_position.pose.position.y = 0.0 #When testing Eilef
+            new_position.pose.position.x = 7.5
+            new_position.pose.position.y = 2.0 #When testing Eilef
             new_position.pose.position.z = 5.0
             
             new_position.pose.orientation.x = 0
