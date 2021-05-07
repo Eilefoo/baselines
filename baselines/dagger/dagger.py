@@ -21,7 +21,7 @@ from voxblox_msgs.srv import FilePath
 from geometry_msgs.msg import Pose
 
 batch_size = 32
-steps = 20000
+steps = 300000
 nb_training_epoch = 50
 dagger_itr = 0
 dagger_buffer_size = 40000
@@ -89,7 +89,7 @@ class Buffer:
             #critic_value = critic([state_batch, tf.cast(action_batch, dtype='float64')])             
             critic_loss = tf.math.reduce_mean(tf.math.square(y - critic_value))
             # self.cnt = self.cnt + 1
-            # if (self.cnt == 100):
+            # if (self.cnt == 100):  u  
             #     self.cnt = 0
             #     print('y:', y)
             #     print('critic_value:', critic_value)
@@ -283,6 +283,7 @@ if __name__ == '__main__':
     play = False
     load_path = None
     save_path = None
+    world_scramble = False
     for i in range(len(sys.argv)):
         if sys.argv[i] == '--play':
             play = True
@@ -406,15 +407,15 @@ if __name__ == '__main__':
         reward_list = []
         latent_pc_list = []
         num_iterations += 1
-        
-        tsdf_filename = "/home/eilefoo/maps/random_generated_maps/random_1.tsdf"
-        env.pause()
-        scrambler_bool = env.scramble_world()
-        world_converter_bool = env.world_to_tsdf_converter(tsdf_filename)
-        map_clear_service()
-        map_load_service(tsdf_filename)
-        env.unpause()
-        env_reset_counter = 0
+        if(world_scramble):
+            tsdf_filename = "/home/eilefoo/maps/random_generated_maps/random_1.tsdf"
+            env.pause()
+            scrambler_bool = env.scramble_world()
+            world_converter_bool = env.world_to_tsdf_converter(tsdf_filename)
+            map_clear_service()
+            map_load_service(tsdf_filename)
+            env.unpause()
+            env_reset_counter = 0
         # Collect data with expert in first iteration
         obs = env.reset()
         augmented_obs = env.get_augmented_obs()
@@ -458,17 +459,18 @@ if __name__ == '__main__':
             print("Iteration: ", i)
 
             if done:
-                env_reset_counter = env_reset_counter +1
-                if (env_reset_counter > 1): 
-                    env.pause()
-                    tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-                    scrambler_bool = env.scramble_world()
-                    world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
-                    print("The world_converter_bool came back: ", world_to_tsdf_bool)
-                    map_clear_service()
-                    map_load_service(tsdf_filename)
-                    env_reset_counter = 0
-                    env.unpause()
+                if(world_scramble):
+                    env_reset_counter = env_reset_counter +1
+                    if (env_reset_counter > 1): 
+                        env.pause()
+                        tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
+                        scrambler_bool = env.scramble_world()
+                        world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
+                        print("The world_converter_bool came back: ", world_to_tsdf_bool)
+                        map_clear_service()
+                        map_load_service(tsdf_filename)
+                        env_reset_counter = 0
+                        env.unpause()
 
                 obs = env.reset()
                 augmented_obs = env.get_augmented_obs()
@@ -530,7 +532,7 @@ if __name__ == '__main__':
             print("\n\nDagger iteration: ", itr, " of ", dagger_itr)
             for i in range(steps):
                 #print('obs:', obs)
-                rospy.sleep(0.1)
+                #rospy.sleep(0.1)
                 latest_pcl = env.get_latest_pcl_latent()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
@@ -560,18 +562,18 @@ if __name__ == '__main__':
                 if done or i == steps-1:
                     episode_rew_queue.appendleft(reward_sum)
                     reward_sum = 0
-                    
-                    env_reset_counter = env_reset_counter +1
-                    if (env_reset_counter >=1): 
-                        env.pause()
-                        tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-                        scrambler_bool = env.scramble_world()
-                        world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
-                        print("The world_converter_bool came back: ", world_to_tsdf_bool)
-                        map_clear_service()
-                        map_load_service(tsdf_filename)
-                        env_reset_counter = 0
-                        env.unpause()
+                    if(world_scramble):
+                        env_reset_counter = env_reset_counter +1
+                        if (env_reset_counter >=1): 
+                            env.pause()
+                            tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
+                            scrambler_bool = env.scramble_world()
+                            world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
+                            print("The world_converter_bool came back: ", world_to_tsdf_bool)
+                            map_clear_service()
+                            map_load_service(tsdf_filename)
+                            env_reset_counter = 0
+                            env.unpause()
 
                     
                     obs = env.reset()
@@ -642,5 +644,4 @@ if __name__ == '__main__':
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_04_05_model128_128_64_30latent.h5')
-
+            actor.save_weights(save_path + '/dagger_pcl_04_05_model128_128_64_30latent_old_map12222222222222222h5')

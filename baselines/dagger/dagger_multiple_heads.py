@@ -21,7 +21,7 @@ from planner_msgs.srv import planner_search, planner_searchRequest
 from geometry_msgs.msg import Pose
 
 batch_size = 32
-steps = 5
+steps = 10
 nb_training_epoch = 50
 dagger_itr = 2
 dagger_buffer_size = 40000
@@ -34,22 +34,24 @@ save_path = "/home/eilefoo/models/dagger"
 
 
 class MultipleHeadActor(keras.Model):
-    def __init__(self, model):
-        super(MultipleHeadActor, self).__init__()
-        self.model = model
-    
-    def compile(self, optimizer):
-        super(MultipleHeadActor,self).compile()
-        self.optimizer = optimizer
-        
+
+
+    def set_use_left_action(self,action_bool):
+        self.use_left_action = action_bool
+
     #@tf.function
     def train_step(self, data):
-        x_true, y_true = data #Both these variables are iterators!!! 
 
+        x_true, y_true = data #Both these variables are iterators!!! 
         print("Inside train_step: \n")
         with tf.GradientTape() as tape:
             #with  tf.compat.v1.Session() as sess:
-            y_pred = self.model(x_true, training=True) #Forward pass
+            y_pred = self(x_true, training=True) #Forward pass
+            if(self.use_left_action == True):
+                y_pred = [y_pred[0],y_pred[2]]
+            else:
+                y_pred = [y_pred[1],y_pred[2]]
+
             print("y_pred: ", y_pred, "\ny_true: ", y_true, "\nIs tensor? ", keras.backend.is_keras_tensor(y_pred[1]), "x_true: ", x_true )
             #print(type(sess.run((y_pred))))
             total_loss = self.total_loss(y_pred, y_true)
@@ -58,42 +60,40 @@ class MultipleHeadActor(keras.Model):
         gradients = tape.gradient(total_loss,training_vars)
 
         self.optimizer.apply_gradients(zip(gradients, training_vars))
+        print("\nApply gradients")
+
         self.compiled_metrics.update_state(y_true, y_pred)
 
         return {"loss ": total_loss}
     
     def total_loss(self, y_pred, y_true): # y true [None, 3], y_pred = (     )
-        #y_true = y_true_iterator.get_next()
-        a = tf.constant([55,23,34])
-        b = a[2]>2
-        print("B: ", b)
-        sess = tfc.InteractiveSession()
-        sess.run(tfc.local_variables_initializer())
-        sess.run(tfc.global_variables_initializer())
-        print("y_pred: ", y_pred[0].eval())
-        y_true_left_mask = y_true[1] < 0 
-        y_true_right_mask = y_true[1] > 0 
-        print("Inside the loss function\n")
-        print("y_pred: ", y_pred, "\ny_true: ", y_true[1],"\ny_true_left_mask:  ", y_true_left_mask)
-
-
-        # if(y_true[1] > 0):
-        #     actor_action = y_pred[0:2]
-        #     expert_dir = 0
-        # elif(y_true <= 0):
-        #     actor_action = y_pred[3:5]
-        #     expert_dir = 1
-
-        action_loss = keras.losses.mean_squared_error(actor_action, y_true[0:2])
+        # zero = tf.constant([0.0])
+        # mask = tf.math.greater(y_true[...,1],zero)
         
-        direction_loss = keras.losses.binary_crossentropy(y_pred[6], expert_dir)
+        # y_pred_right = y_pred[1][mask]
+        # y_pred_left = y_pred[0][~mask]
 
+
+        # action_loss = tf.losses.mse(y_pred_right,y_true[mask]) + tf.losses.mse(y_pred_left,y_true[~mask])
+        # print("\nin this part of the loss function, y_pred: ", y_pred)
+
+        # y_pred_dir = y_pred[2]
+        # print("Right before the direction loss calculation, \ny_pred_dir= ", y_pred_dir[:], "\nmask: ", mask,"\n\n")
+        
+        # direction_loss = keras.losses.binary_crossentropy(mask,y_pred_dir[:])
+        # print("Getting closer to the end now")
+        # total_loss = action_loss + direction_loss
+        y_true_acc, y_true_dir = tf.split(y_true, [3,1],axis=1)
+
+        print("\n\nMSE loss, y_true: ", y_true_acc)
+        action_loss = tf.losses.mse(y_pred[0], y_true_acc)
+        
+        print("\nRight before the direction loss calculation, \ny_true= ",y_true_dir, "\npred: ", y_pred[:][1],"\n\n")
+        direction_loss = keras.losses.binary_crossentropy(y_true_dir,y_pred[:][1])
+        
         total_loss = action_loss + direction_loss
-
-        return total_loss    
+        return total_loss 
         
-
-
 
 class Buffer:
     def __init__(self, buffer_capacity=100000, batch_size=64):
@@ -242,35 +242,6 @@ def get_teacher_action(planner, controller, augmented_obs, action_space):
 
 # build network
 
-def custom_loss_function(y_true,y_pred):
-    
-    msg = tf.constant('Hello Tensorflow')
-    with  tf.compat.v1.Session() as sess:
-        print(sess.run((msg)))
-
-
-
-        y_true_np = y_true.eval()
-
-        #print("y_true: ", y_true_np, "\ny_pred: ", y_pred)
-
-    
-    if(y_true_np[1] > 0):
-        actor_action = y_pred[0:2]
-        expert_dir = 0
-    elif(y_true <= 0):
-        actor_action = y_pred[3:5]
-        expert_dir = 1
-    
-    #with tf.GradientTape() as tape:
-    action_loss = keras.losses.mean_squared_error(actor_action, y_true[0:2])
-    
-    direction_loss = keras.losses.binary_crossentropy(y_pred[6], expert_dir)
-
-    total_loss = action_loss + direction_loss
-
-    return total_loss
-
 
 def build_backbone(layer_input_shape):
     robot_state_input = tf.keras.Input(shape=layer_input_shape)
@@ -307,10 +278,10 @@ def build_actor_model(ob_robot_state_shape, ob_pcl_shape, nb_actions):
     output_layer_predictor =tf.keras.layers.Dense(units=1,
                                         name='output_predictor',
                                         activation=tf.keras.activations.sigmoid,
-                                        kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3))(backbone.outputs[0]) ##Why [0]?
+                                        kernel_initializer=tf.random_uniform_initializer(minval=-3e-3, maxval=3e-3))(backbone.outputs[0]) 
         
-    model = tf.keras.Model(inputs=[backbone.inputs], outputs=[output_layer_left_action, output_layer_right_action, output_layer_predictor ], name='actor_net')
-    multiple_head_actor = MultipleHeadActor(model)
+    multiple_head_actor = MultipleHeadActor(inputs=[backbone.inputs], outputs=[output_layer_left_action, output_layer_right_action, output_layer_predictor ], name='actor_net')
+    #multiple_head_actor = MultipleHeadActor()
     multiple_head_actor.compile(optimizer= tf.keras.optimizers.Adam(lr=1e-4))
     return multiple_head_actor
 
@@ -426,7 +397,7 @@ if __name__ == '__main__':
     print("Shape of obs space: ", env.ob_robot_state_shape, "\nShape of pc: ", env.pcl_latent_dim)
     # actor
     actor = build_actor_model(ob_robot_state_shape=env.ob_robot_state_shape, ob_pcl_shape=env.pcl_latent_dim, nb_actions=nb_actions)
-    actor.model.summary()
+    actor.summary()
     if (load_path != None): 
         print('load model from path:', load_path)
         actor.load_weights(load_path)
@@ -476,15 +447,21 @@ if __name__ == '__main__':
             itr += 1 
 
     else: # training mode
-        robot_state_all = np.zeros((1,env.ob_robot_state_shape))
-        latent_pcl_all = np.zeros((1,env.pcl_latent_dim))
+        robot_left_state_all = np.zeros((1,env.ob_robot_state_shape))
+        robot_right_state_all = np.zeros((1,env.ob_robot_state_shape))
+        latent_left_pcl_all = np.zeros((1,env.pcl_latent_dim))
+        latent_right_pcl_all = np.zeros((1,env.pcl_latent_dim))
 
-        actions_all = np.zeros((0, nb_actions))
-        rewards_all = np.zeros((0, ))
+        actions_left_all = np.zeros((0, nb_actions+1))
+        actions_right_all = np.zeros((0, nb_actions+1))
+        rewards_left_all = np.zeros((0, ))
+        rewards_right_all = np.zeros((0, ))
 
         obs_list = []
         augmented_obs_list = []
         action_list = []
+        action_left_list = []
+        action_right_list = []
         reward_list = []
         latent_pc_list = []
         num_iterations += 1
@@ -520,7 +497,18 @@ if __name__ == '__main__':
             obs_list.append(np.array([obs]))
             latent_pc_list.append(np.array([latest_pcl]))
             augmented_obs_list.append(augmented_obs)
-            action_list.append(np.array(action))
+            print("action: ",action)
+            if (action[0][1] > 0):
+                direction = [1]
+                action_left_with_dir = np.concatenate([action[0],direction])
+                action_list.append(np.array([action_left_with_dir]))
+                print("Action left: ", action_list)
+            
+            else:
+                direction = [0]
+                action_right_with_dir = np.concatenate([action[0],direction])
+                action_list.append(np.array([action_right_with_dir]))
+                print("Action right: ", action_list)
 
             #print("Here are the actions * action_space.high: ", action * env.action_space.high)
             #print("Applied action: ", action*env.action_space.high)
@@ -538,20 +526,34 @@ if __name__ == '__main__':
 
         print('Packing data into arrays...')
         for obs, act, rew, pc in zip(obs_list, action_list, reward_list, latent_pc_list):
-            robot_state = obs
-            pcl_feature = pc
             #print("Robot_state: ", robot_state, "Shape of robot_state: ", np.shape(robot_state), "\npcl_feature: ", pcl_feature, "Shape of pcl: ", np.shape(pcl_feature),
-            #"\nAction: ", act, "Shape of actions: ", np.shape(act))
-            #print("Actions_all: ", actions_all)
-            robot_state_all = np.concatenate([robot_state_all, robot_state], axis=0)
-            latent_pcl_all = np.concatenate([latent_pcl_all, pcl_feature], axis=0)
-            actions_all = np.concatenate([actions_all, act], axis=0)
-            rewards_all = np.concatenate([rewards_all, rew], axis=0)
+            #"\nAction: ", act, "Shape of actions: ", np.shape(act)) sprint("Actions_all: ", actions_all)
+            print("Action in the packing of data: ",act)#, "Actions all: ", actions_left_all if act[0][3]==1 else actions_right_all)
+            if(act[0][3] == 1):
+                robot_state = obs
+                pcl_feature = pc
+                robot_left_state_all = np.concatenate([robot_left_state_all, robot_state], axis=0)
+                latent_left_pcl_all = np.concatenate([latent_left_pcl_all, pcl_feature], axis=0)
+                actions_left_all = np.concatenate([actions_left_all, act], axis=0)
+                rewards_left_all = np.concatenate([rewards_left_all, rew], axis=0)
+            
+            elif(act[0][3] == 0):
+                robot_state = obs
+                pcl_feature = pc
+                robot_right_state_all = np.concatenate([robot_right_state_all, robot_state], axis=0)
+                latent_right_pcl_all = np.concatenate([latent_right_pcl_all, pcl_feature], axis=0)
+                actions_right_all = np.concatenate([actions_right_all, act], axis=0)
+                rewards_right_all = np.concatenate([rewards_right_all, rew], axis=0)
 
-        robot_state_all = np.delete(robot_state_all, 0,0) 
-        latent_pcl_all = np.delete(latent_pcl_all, 0,0)
+            else:
+                print("ERROR: the action direction should be either 0 or 1 but it is: ", act[3])
+
+        robot_left_state_all = np.delete(robot_left_state_all, 0,0)
+        latent_left_pcl_all = np.delete(latent_left_pcl_all, 0,0)
+        robot_right_state_all = np.delete(robot_right_state_all, 0,0)
+        latent_right_pcl_all = np.delete(latent_right_pcl_all, 0,0)
         
-        #print("\nRobot state all: ", robot_state_all)
+        print("\naction left all: ", actions_left_all)
         #print("\npcl all: ", latent_pcl_all)        
 
         # print("Shape of robot state: ", np.shape(robot_state_all), "\nShape of pc: ", np.shape(latent_pcl_all), "\nShape of actions: ", np.shape(actions_all))
@@ -562,9 +564,20 @@ if __name__ == '__main__':
         # print("The concatenated list: ", concatenated_input)
         # print("Shape of one element of concat_input: ", concatenated_input[0].shape, "One elemtent of concaten_: ", concatenated_input[0])
         # First train for actor network
-        actor.fit(np.concatenate((robot_state_all, latent_pcl_all), axis=1), actions_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
-        output_file = open('results.txt', 'w')
+        if(len(actions_left_all)>0):
+            print("traning left side \n")
+            actor.set_use_left_action(True)
+
+            actor.fit(np.concatenate((robot_left_state_all, latent_left_pcl_all), axis=1), actions_left_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
+            output_file = open('results.txt', 'w')
         
+        print("Finished training the left side \n\n\n")
+        if(len(actions_right_all)>0):
+            actor.set_use_left_action(False)
+            print("traning right side \n")  
+            actor.fit(np.concatenate((robot_right_state_all, latent_right_pcl_all), axis=1), actions_right_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
+            output_file = open('results.txt', 'w')
+            
         early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
 
         env.unpause()
@@ -573,7 +586,7 @@ if __name__ == '__main__':
         dagger_buffer_cnt = 0
         for itr in range(dagger_itr):
             
-            obs_list = []
+            obs_list = []   
             augmented_obs_list = []
             action_list = []
             reward_list = []
