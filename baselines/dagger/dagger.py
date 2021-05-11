@@ -10,6 +10,7 @@ from baselines.a2c.utils import ortho_init
 from baselines.common.rotors_wrappers import RotorsWrappers
 from baselines.dagger.pid import PID
 #from baselines.dagger.buffer import Buffer
+import matplotlib.pyplot as plt
 
 from tensorboardX import SummaryWriter
 import timeit
@@ -30,6 +31,24 @@ tau = 0.001 # Used to update target networks
 buffer_capacity=50000 # unused now!
 stddev = 0.1
 save_path = "/home/eilefoo/models/dagger"
+
+class Logger:
+    def __init__(self):
+        self.logdir = "../logs/"+ f'{datetime.now().day:02d}-{datetime.now().month:02d}_{datetime.now().hour:02d}:{datetime.now().minute:02d}'
+        self.tensorboard_callback = keras.callbacks.TensorBoard(log_dir=self.logdir)
+        self.info_returns = []
+        self.training_epochs = nb_training_epoch #we know that for every set of epochs, there will be one value for percentage collision, reach goal and timeout
+        self.current_training_round = 0
+
+
+    def save_performance_stats(self):
+        performance_statistics = self.info_returns
+        summation_vector = np.sum(performance_statics,axis=1)
+        performance_statistics = performance_vector/summation_vector[:,None] #Now each element is a percentage
+        performance_statistics.to_file(self.logdir+'/dagger_performance_stats.csv',sep=',')
+
+
+
 
 
 class Buffer:
@@ -324,6 +343,9 @@ if __name__ == '__main__':
 
     #tf.keras.backend.set_floatx('float32')|
     save_path = "/home/eilefoo/models/dagger"
+
+    #Initialize progress saver
+    logger = Logger()
     
     pid = PID([1.0, 1.0, 1.0], [2.0, 2.0, 2.0])
     nb_actions = env.action_space.shape[-1]
@@ -503,8 +525,9 @@ if __name__ == '__main__':
         # print("The concatenated list: ", concatenated_input)
         # print("Shape of one element of concat_input: ", concatenated_input[0].shape, "One elemtent of concaten_: ", concatenated_input[0])
         # First train for actor network
-        actor.fit(np.concatenate((robot_state_all, latent_pcl_all), axis=1), actions_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=False)
+        actor.fit(np.concatenate((robot_state_all, latent_pcl_all), axis=1), actions_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=False,initial_epoch=logger.current_training_round*logger.training_epochs,callbacks=[logger.tensorboard_callback])
         output_file = open('results.txt', 'w')
+        logger.current_training_round += 1
         
         early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
 
@@ -513,6 +536,8 @@ if __name__ == '__main__':
         # Aggregate and retrain actor network
         dagger_buffer_cnt = 0
         for itr in range(dagger_itr):
+            #idx0: reach goal, idx1: collide, idx2: timeout
+            result_statistic = np.zeros(3)
             
             obs_list = []
             augmented_obs_list = []
@@ -548,7 +573,7 @@ if __name__ == '__main__':
 
                 action = tf.clip_by_value(action, -1, 1)
 
-                new_obs, reward, done, _ = env.step(action * env.action_space.high)
+                new_obs, reward, done, info = env.step(action * env.action_space.high)
                 augmented_obs = env.get_augmented_obs()
                 obs = new_obs
                 reward_sum += reward
@@ -575,12 +600,23 @@ if __name__ == '__main__':
                             env_reset_counter = 0
                             env.unpause()
 
+                    #Record 
+                    if info.status == "reach goal":
+                        result_statistic[0] +=1
+                    if info.status == "collide":
+                        result_statistic[1] +=1
+                    if info.status == "timeout":
+                        result_statistic[2] +=1
+
+                    
                     
                     obs = env.reset()
                     augmented_obs = env.get_augmented_obs()
                     rospy.sleep(0.3) #Wait for pointcloud 
                     continue
 
+            #Saving the Dagger performance statistic
+            logger.info_returns.append(result_statistic)
 
             env.pause()
 
@@ -637,11 +673,14 @@ if __name__ == '__main__':
             actor.fit(concat_input, actions_all,
                             batch_size=batch_size,
                             epochs=nb_training_epoch,
-                            shuffle=True, verbose=False)
+                            shuffle=True, verbose=False,initial_epoch=logger.current_training_round*logger.training_epochs,callbacks=[logger.tensorboard_callback])
                             #validation_split=0.2, verbose=0,
-                                    
+            logger.current_training_round += 1
         actor.save_weights('dagger_pcl.h5')
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
             actor.save_weights(save_path + '/dagger_pcl_04_05_model128_128_64_30latent_old_map12222222222222222h5')
+    
+    #Save the dagger performance to file
+    logger.save_performance_stats()
