@@ -43,9 +43,18 @@ class Logger:
 
     def save_performance_stats(self):
         performance_statistics = self.info_returns
-        summation_vector = np.sum(performance_statics,axis=1)
-        performance_statistics = performance_vector/summation_vector[:,None] #Now each element is a percentage
+        #summation_vector = np.sum(performance_statics,axis=1)
+        #performance_statistics = performance_vector/summation_vector[:,None] #Now each element is a percentage
         performance_statistics.to_file(self.logdir+'/dagger_performance_stats.csv',sep=',')
+
+    def save_model_parameters(self,model,env):
+        file1 = open(self.logdir+"/network_and_env_training_summary.txt","w")
+        Data_to_save = f'Batch size: {batch_size}\nSteps: {steps}\nNumber of training epochs: {nb_training_epoch}\nDagger iterations: {dagger_itr}\nDagger buffer size: {dagger_buffer_size}\nGamma: {gamma}\nTau: {tau}\nStd. dev.: {stddev} Shape of obs space: {env.ob_robot_state_shape}\nShape of pc:{env.pcl_latent_dim}'
+        stringlist = []
+        model.summary(line_length=120,print_fn=lambda x: stringlist.append(x))
+        model_summary = "\n".join(stringlist)
+        file1.writelines(Data_to_save+model_summary)
+        file1.close()
 
 
 
@@ -361,6 +370,8 @@ if __name__ == '__main__':
     writer = SummaryWriter(comment="-rmf_dagger_pcl_latent")
 
     episode_rew_queue = deque(maxlen=10)
+
+    logger.save_model_parameters(actor, env)
 
     env_reset_counter = 0 
     num_iterations = 0
