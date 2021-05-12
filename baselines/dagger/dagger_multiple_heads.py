@@ -12,25 +12,27 @@ from baselines.common.rotors_wrappers import RotorsWrappers
 from baselines.dagger.pid import PID
 from baselines.dagger.Actor_model import Actor_model
 #from baselines.dagger.buffer import Buffer
+import random
+from math import floor
 
 from tensorboardX import SummaryWriter
 import timeit
 from baselines.ddpg.noise import AdaptiveParamNoiseSpec, NormalActionNoise, OrnsteinUhlenbeckActionNoise
 from collections import deque
 from planner_msgs.srv import planner_search, planner_searchRequest
+from voxblox_msgs.srv import FilePath
 from geometry_msgs.msg import Pose
 
-batch_size = 32
-steps = 10
+batch_size = 32 
 nb_training_epoch = 50
-dagger_itr = 2
+steps = 1024
+dagger_itr = 5
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
 buffer_capacity=50000 # unused now!
 stddev = 0.1
-save_path = "/home/eilefoo/models/dagger"
-
+save_path = "/home/eilefoo/models/dagger_multiple_heads"
 
 
 class MultipleHeadActor(keras.Model):
@@ -43,14 +45,17 @@ class MultipleHeadActor(keras.Model):
     def train_step(self, data):
 
         x_true, y_true = data #Both these variables are iterators!!! 
+        # x_true_left, x_true_right = tf.split(x_true, num_or_size_splits=2)
+        # y_true_left, y_true_right = tf.split(y_true, num_or_size_splits=2)
         print("Inside train_step: \n")
         with tf.GradientTape() as tape:
-            #with  tf.compat.v1.Session() as sess:
+
             y_pred = self(x_true, training=True) #Forward pass
-            if(self.use_left_action == True):
-                y_pred = [y_pred[0],y_pred[2]]
-            else:
-                y_pred = [y_pred[1],y_pred[2]]
+
+            # if(self.use_left_action == True):
+            #     y_pred = [y_pred[0],y_pred[2]]
+            # else:
+            #     y_pred = [y_pred[1],y_pred[2]]
 
             print("y_pred: ", y_pred, "\ny_true: ", y_true, "\nIs tensor? ", keras.backend.is_keras_tensor(y_pred[1]), "x_true: ", x_true )
             #print(type(sess.run((y_pred))))
@@ -84,12 +89,18 @@ class MultipleHeadActor(keras.Model):
         # print("Getting closer to the end now")
         # total_loss = action_loss + direction_loss
         y_true_acc, y_true_dir = tf.split(y_true, [3,1],axis=1)
-
+        y_true_dir_bool = tf.cast(y_true_dir, tf.bool)
+        y_pred_left_acc = y_pred[0]
+        y_pred_right_acc = y_pred[1]
+        y_pred_dir = y_pred[2]
+        #  = tf.split(y_pred, [3,3,1],axis=1)
         print("\n\nMSE loss, y_true: ", y_true_acc)
-        action_loss = tf.losses.mse(y_pred[0], y_true_acc)
+
+        y_pred_acc = tf.where(y_true_dir_bool,y_pred_left_acc,y_pred_right_acc)
+        action_loss = tf.losses.mse(y_pred_acc, y_true_acc)
         
-        print("\nRight before the direction loss calculation, \ny_true= ",y_true_dir, "\npred: ", y_pred[:][1],"\n\n")
-        direction_loss = keras.losses.binary_crossentropy(y_true_dir,y_pred[:][1])
+        print("\nRight before the direction loss calculation, \ny_true= ",y_true_dir, "\npred: ", y_pred_dir,"\n\n")
+        direction_loss = keras.losses.binary_crossentropy(y_true_dir,y_pred_dir)
         
         total_loss = action_loss + direction_loss
         return total_loss 
@@ -373,6 +384,7 @@ if __name__ == '__main__':
     # Initialize
     env = RotorsWrappers()
     planner_service = rospy.ServiceProxy('/gbplanner/search', planner_search)    
+    map_load_service = rospy.ServiceProxy('/gbplanner_node/load_map',FilePath)
 
     # Limiting GPU memory growth: https://www.tensorflow.org/guide/gpu
     gpus = tf.config.experimental.list_physical_devices('GPU')
@@ -452,7 +464,7 @@ if __name__ == '__main__':
         latent_left_pcl_all = np.zeros((1,env.pcl_latent_dim))
         latent_right_pcl_all = np.zeros((1,env.pcl_latent_dim))
 
-        actions_left_all = np.zeros((0, nb_actions+1))
+        actions_left_all = np.zeros((0, nb_actions+1))  
         actions_right_all = np.zeros((0, nb_actions+1))
         rewards_left_all = np.zeros((0, ))
         rewards_right_all = np.zeros((0, ))
@@ -465,6 +477,8 @@ if __name__ == '__main__':
         reward_list = []
         latent_pc_list = []
         num_iterations += 1
+        map_load_service('/home/eilefoo/maps/box2_more_stoned.tsdf')
+
 
         # Collect data with expert in first iteration
         obs = env.reset()
@@ -502,13 +516,11 @@ if __name__ == '__main__':
                 direction = [1]
                 action_left_with_dir = np.concatenate([action[0],direction])
                 action_list.append(np.array([action_left_with_dir]))
-                print("Action left: ", action_list)
             
             else:
                 direction = [0]
                 action_right_with_dir = np.concatenate([action[0],direction])
                 action_list.append(np.array([action_right_with_dir]))
-                print("Action right: ", action_list)
 
             #print("Here are the actions * action_space.high: ", action * env.action_space.high)
             #print("Applied action: ", action*env.action_space.high)
@@ -528,7 +540,7 @@ if __name__ == '__main__':
         for obs, act, rew, pc in zip(obs_list, action_list, reward_list, latent_pc_list):
             #print("Robot_state: ", robot_state, "Shape of robot_state: ", np.shape(robot_state), "\npcl_feature: ", pcl_feature, "Shape of pcl: ", np.shape(pcl_feature),
             #"\nAction: ", act, "Shape of actions: ", np.shape(act)) sprint("Actions_all: ", actions_all)
-            print("Action in the packing of data: ",act)#, "Actions all: ", actions_left_all if act[0][3]==1 else actions_right_all)
+            #print("Action in the packing of data: ",act)
             if(act[0][3] == 1):
                 robot_state = obs
                 pcl_feature = pc
@@ -553,7 +565,7 @@ if __name__ == '__main__':
         robot_right_state_all = np.delete(robot_right_state_all, 0,0)
         latent_right_pcl_all = np.delete(latent_right_pcl_all, 0,0)
         
-        print("\naction left all: ", actions_left_all)
+        #print("\naction left all: ", actions_left_all)
         #print("\npcl all: ", latent_pcl_all)        
 
         # print("Shape of robot state: ", np.shape(robot_state_all), "\nShape of pc: ", np.shape(latent_pcl_all), "\nShape of actions: ", np.shape(actions_all))
@@ -563,20 +575,33 @@ if __name__ == '__main__':
         # print("Latent_pc: ", latent_pcl_all)
         # print("The concatenated list: ", concatenated_input)
         # print("Shape of one element of concat_input: ", concatenated_input[0].shape, "One elemtent of concaten_: ", concatenated_input[0])
-        # First train for actor network
-        if(len(actions_left_all)>0):
-            print("traning left side \n")
-            actor.set_use_left_action(True)
-
-            actor.fit(np.concatenate((robot_left_state_all, latent_left_pcl_all), axis=1), actions_left_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
-            output_file = open('results.txt', 'w')
         
-        print("Finished training the left side \n\n\n")
-        if(len(actions_right_all)>0):
-            actor.set_use_left_action(False)
-            print("traning right side \n")  
-            actor.fit(np.concatenate((robot_right_state_all, latent_right_pcl_all), axis=1), actions_right_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
-            output_file = open('results.txt', 'w')
+        input_left_data = np.concatenate((robot_left_state_all, latent_left_pcl_all), axis=1)
+        x_y_left_data = np.concatenate((input_left_data, actions_left_all), axis=1)
+        input_right_data = np.concatenate((robot_right_state_all, latent_right_pcl_all), axis=1)
+        x_y_right_data = np.concatenate((input_right_data, actions_right_all), axis=1)
+
+        x_y_both_sides = np.concatenate((x_y_left_data, x_y_right_data), axis=0)
+        
+        np.random.shuffle(x_y_both_sides)
+        shuffled_both_sides = x_y_both_sides
+        
+        actor.fit( shuffled_both_sides[:,0:56], shuffled_both_sides[:,56:60], batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
+        output_file = open('results.txt', 'w')
+
+        # if(len(actions_left_all)>0):
+        #     print("traning left side \n")
+        #     actor.set_use_left_action(True)
+
+        #     actor.fit(np.concatenate((robot_left_state_all, latent_left_pcl_all), axis=1), actions_left_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
+        #     output_file = open('results.txt', 'w')
+        
+        # print("Finished training the left side \n\n\n")
+        # if(len(actions_right_all)>0):
+        #     actor.set_use_left_action(False)
+        #     print("traning right side \n")  
+        #     actor.fit(np.concatenate((robot_right_state_all, latent_right_pcl_all), axis=1), actions_right_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
+        #     output_file = open('results.txt', 'w')
             
         early_stop = keras.callbacks.EarlyStopping(monitor='val_loss', patience=10)
 
@@ -592,11 +617,16 @@ if __name__ == '__main__':
             reward_list = []
             latent_pc_list = []
 
-            robot_state_all = np.zeros((1,env.ob_robot_state_shape))
-            latent_pcl_all = np.zeros((1,env.pcl_latent_dim))
-            actions_all = np.zeros((0, nb_actions))
-            rewards_all = np.zeros((0, ))
-            
+            robot_left_state_all = np.zeros((1,env.ob_robot_state_shape))
+            latent_left_pcl_all = np.zeros((1,env.pcl_latent_dim))
+            robot_right_state_all = np.zeros((1,env.ob_robot_state_shape))
+            latent_right_pcl_all = np.zeros((1,env.pcl_latent_dim))
+            teacher_actions_left_all = np.zeros((0, nb_actions+1))
+            rewards_left_all = np.zeros((0, ))
+            teacher_actions_right_all = np.zeros((0, nb_actions+1))
+            rewards_right_all = np.zeros((0, ))
+
+
             obs = env.reset()
 
             reward_sum = 0.0
@@ -604,20 +634,22 @@ if __name__ == '__main__':
             print("\n\nDagger iteration: ", itr, " of ", dagger_itr)
             for i in range(steps):
                 #print('obs:', obs)
-                rospy.sleep(0.1)
                 latest_pcl = env.get_latest_pcl_latent()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
-                concatenated_input = np.reshape(concatenated_input,(1,36))
-                #print("Concatenated input shape: ", np.shape(concatenated_input))
+                concatenated_input = np.reshape(concatenated_input,(1,env.ob_robot_state_shape + env.pcl_latent_dim))
             
                 #start = timeit.default_timer()
-                action = actor(concatenated_input, training=False)  # assume symmetric action space (low = -high)
-                #print("Actor actions: ", action*env.action_space.high)
+                pred_action = actor(concatenated_input, training=False)  # assume symmetric action space (low = -high)
+                print("Actor actions: ", action*env.action_space.high)
                 #stop = timeit.default_timer()
                 #print('Time for actor prediction: ', stop - start)
-                #print('action:', action) # action = [[.]]
-
+                
+                if(pred_action[2]> 0.5):
+                    action = pred_action[0]
+                elif(pred_action[2] <= 0.5):
+                    action = pred_action[1]
+                
                 action = tf.clip_by_value(action, -1, 1)
 
                 new_obs, reward, done, _ = env.step(action * env.action_space.high)
@@ -628,6 +660,7 @@ if __name__ == '__main__':
 
                 obs_list.append(np.array([obs]))
                 latent_pc_list.append(np.array([latest_pcl]))
+                
                 augmented_obs_list.append(augmented_obs)
                 action_list.append(np.array(action))
 
@@ -661,25 +694,41 @@ if __name__ == '__main__':
                 robot_state = obs
                 pcl_feature = pc
                 #print('robot_state:', robot_state)
-                if (len(actions_all) < dagger_buffer_size):
-                    #print("Inside if")
-                    robot_state_all = np.concatenate([robot_state_all, robot_state], axis=0)
-                    latent_pcl_all = np.concatenate([latent_pcl_all, pcl_feature], axis=0)
-                    actions_all = np.concatenate([actions_all, teacher_action], axis=0)
+                if (len(actions_left_all) + len(actions_right_all) < dagger_buffer_size):
+                    print("Inside if")
+                    if(teacher_action[0][1] > 0):
+                        robot_left_state_all = np.concatenate([robot_left_state_all, robot_state], axis=0)
+                        latent_left_pcl_all = np.concatenate([latent_left_pcl_all, pcl_feature], axis=0)
+                        teacher_left_action_list = []
+                        teacher_action_left_with_dir = np.concatenate([teacher_action[0],[1]])
+                        teacher_left_action_list.append(teacher_action_left_with_dir)
+                        teacher_actions_left_all = np.concatenate((teacher_actions_left_all, teacher_left_action_list), axis=0)
+                    
+                    elif (teacher_action[0][1] <= 0):
+                        robot_right_state_all = np.concatenate([robot_right_state_all, robot_state], axis=0)
+                        latent_right_pcl_all = np.concatenate([latent_right_pcl_all, pcl_feature], axis=0)
+                        teacher_right_action_list = []
+                        teacher_action_right_with_dir = np.concatenate([teacher_action[0],[0]])
+
+                        teacher_right_action_list.append(teacher_action_right_with_dir)
+                        teacher_actions_right_all = np.concatenate((teacher_actions_right_all, teacher_right_action_list), axis=0)
+
+                    else:
+                        print("ERROR: teacher action[1] is neither above or below zero, but: ", teacher_action[0])
+
                 else: # buffer is full
 
-                    #print("Inside else")
-                    robot_state_all[dagger_buffer_cnt] = robot_state
-                    latent_pcl_all[dagger_buffer_cnt] = pcl_feature
-                    actions_all[dagger_buffer_cnt] = teacher_action
+                    print("Inside else")
                     dagger_buffer_cnt += 1
                     if (dagger_buffer_cnt == dagger_buffer_size):
                         print('reset dagger_buffer_cnt')
                         dagger_buffer_cnt = 0
 
             #Removing the initialization elements
-            robot_state_all = np.delete(robot_state_all, 0,0) 
-            latent_pcl_all = np.delete(latent_pcl_all, 0,0)
+            robot_left_state_all = np.delete(robot_left_state_all, 0,0) 
+            latent_left_pcl_all = np.delete(latent_left_pcl_all, 0,0)
+            robot_right_state_all = np.delete(robot_right_state_all, 0,0) 
+            latent_right_pcl_all = np.delete(latent_right_pcl_all, 0,0)
             
             # print("Shape of robot state: ", np.shape(robot_state_all), "\nShape of pc: ", np.shape(latent_pcl_all), "\nShape of actions: ", np.shape(actions_all))
             # concatenated_input = np.concatenate((robot_state_all, latent_pcl_all), axis=1)
@@ -689,18 +738,49 @@ if __name__ == '__main__':
             # print("The concatenated list: ", concatenated_input)
             # print("Shape of one element of concat_input: ", concatenated_input[0].shape, "One element of concated_input: ", concatenated_input[0])
             # train actor
-            concat_input = np.concatenate((robot_state_all, latent_pcl_all), axis=1)
+            #concat_input = np.concatenate((robot_state_all, latent_pcl_all), axis=1)
             #print(concat_input)
+
+
+            input_left_data = np.concatenate((robot_left_state_all, latent_left_pcl_all), axis=1)
+            x_y_left_data = np.concatenate((input_left_data, teacher_actions_left_all), axis=1)
+            input_right_data = np.concatenate((robot_right_state_all, latent_right_pcl_all), axis=1)
+            x_y_right_data = np.concatenate((input_right_data, teacher_actions_right_all), axis=1)
+
+            x_y_both_sides = np.concatenate((x_y_left_data, x_y_right_data), axis=0)
+
+            np.random.shuffle(x_y_both_sides)
+            shuffled_both_sides = x_y_both_sides
+
+            while len(shuffled_both_sides) % batch_size != 0: #This is to ensure the length of the data is divisible by the batch size
+                print("The length of shuffled both sides ",len(shuffled_both_sides))
+                rand_index = floor(random.uniform(0,len(shuffled_both_sides)))
+                shuffled_both_sides = np.concatenate((shuffled_both_sides, [shuffled_both_sides[rand_index]]), axis=0)
+
+            # if(len(actions_left_all)>0):
+            #     print("traning left side \n")
+            #     actor.set_use_left_action(True)
+
+            #     actor.fit(np.concatenate((robot_left_state_all, latent_left_pcl_all), axis=1), teacher_actions_left_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
+            #     output_file = open('results.txt', 'w')
+        
+            # print("Finished training the left side \n\n\n")
+            # if(len(actions_right_all)>0):
+            #     actor.set_use_left_action(False)
+            #     print("traning right side \n")  
+            #     actor.fit(np.concatenate((robot_right_state_all, latent_right_pcl_all), axis=1), teacher_actions_right_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
+            #     output_file = open('results.txt', 'w')
+            
             print("Dagger training for actor")
-            actor.fit(concat_input, actions_all,
+            actor.fit(shuffled_both_sides[:,0:56], shuffled_both_sides[:,56:60],
                             batch_size=batch_size,
                             epochs=nb_training_epoch,
-                            shuffle=True, verbose=False)
+                            shuffle=True, verbose=True)
                             #validation_split=0.2, verbose=0,
                                     
         actor.save_weights('dagger_pcl.h5')
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_21_04_new_pc_model128_128_64_half_speed_30latent_.h5')
+            actor.save_weights(save_path + '/dagger_pcl_21_04_new_pc_model128_128_64_half_latent_50_multiple_heads.h5')
 

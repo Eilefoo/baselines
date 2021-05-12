@@ -54,7 +54,7 @@ class RotorsWrappers:
         self.ob_robot_state_shape = OB_ROBOT_STATE_SHAPE        
         
         self.pcl_latent_dim = 50 #Eilef
-        self.pcl_latent_stack = [] 
+        self.pcl_latent_latest = []
         self.pc_slice_stack = [] 
 
         self.total_env_obs = self.ob_robot_state_shape + self.pcl_latent_dim
@@ -141,8 +141,11 @@ class RotorsWrappers:
 
 
     def pc_latent_callback(self, data):
-        rospy.loginfo("PC_Latent_callback timer")
-        self.pcl_latent_stack.append(data.latent_space)
+        #rospy.loginfo("PC_Latent_callback timer")
+        self.pcl_latent_latest = data.latent_space
+    
+    def clear_pc_latent(self):
+        self.pcl_latent_latest = None
 
     def pc_slice_callback(self,image):
         #rospy.loginfo("PC_slice_callback timer")
@@ -163,7 +166,7 @@ class RotorsWrappers:
 
 
     def get_latest_pcl_latent(self):
-        return self.pcl_latent_stack.pop()
+        return self.pcl_latent_latest
 
     def set_wanted_direction(self, dir_vector):
         self.wanted_direction = dir_vector
@@ -205,13 +208,13 @@ class RotorsWrappers:
         self.max_acc_y = rospy.get_param('max_acc_y', 1.0)
         self.max_acc_z = rospy.get_param('max_acc_z', 1.0)
 
-        self.max_wp_x = rospy.get_param('max_waypoint_x', 30.0)
+        self.max_wp_x = rospy.get_param('max_waypoint_x', 8.0)
         self.max_wp_y = rospy.get_param('max_waypoint_y', 2.5)
-        self.max_wp_z = rospy.get_param('max_waypoint_z', 3.0) 
+        self.max_wp_z = rospy.get_param('max_waypoint_z', 4.0) 
 
-        self.min_wp_x = rospy.get_param('min_waypoint_x', -30.0)
+        self.min_wp_x = rospy.get_param('min_waypoint_x', -8.0)
         self.min_wp_y = rospy.get_param('min_waypoint_y', -2.5)
-        self.min_wp_z = rospy.get_param('min_waypoint_z', 3.0)                
+        self.min_wp_z = rospy.get_param('min_waypoint_z', 2.0)                
 
         self.min_init_z = rospy.get_param('min_initial_z', 2.0)
         self.max_init_z = rospy.get_param('max_initial_z', 4.0)
@@ -485,7 +488,12 @@ class RotorsWrappers:
         #sphere_marker_array = MarkerArray()
         u = random.random()
         v = random.random()
-        theta = u * 2.0 * np.pi
+        #theta = u * 2.0 * np.pi
+        front_or_back = random.uniform(0,1)
+        if(front_or_back > 0.5):
+            theta = random.uniform(-np.pi/6, np.pi/6)
+        else:
+            theta = random.uniform(5*np.pi/6, 7*np.pi/6)
         #phi = np.arccos(2.0 * v - 1.0)
         phi = random.uniform(3*np.pi/8, 5*np.pi/8)
         # while np.isnan(phi):
@@ -621,7 +629,7 @@ class RotorsWrappers:
             start_pose, collide = self.spawn_robot2(None)
 
         #rospy.loginfo('New start pose: (%.3f , %.3f , %.3f)', start_pose.position.x, start_pose.position.y, start_pose.position.z)
-        
+        self.clear_pc_latent()
         # check if the end position collides with env: fix it, so stupid!
         goal, r = self.generate_new_goal(start_pose)
         _, collide = self.spawn_robot2(goal)

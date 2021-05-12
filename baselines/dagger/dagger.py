@@ -21,9 +21,9 @@ from voxblox_msgs.srv import FilePath
 from geometry_msgs.msg import Pose
 
 batch_size = 32
-steps = 300000
+steps = 150000
 nb_training_epoch = 50
-dagger_itr = 0
+dagger_itr = 30
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
@@ -236,7 +236,7 @@ def build_critic_model(input_shape):
 #     state_input = layers.Input(shape=(6))
 #     state_out = layers.Dense(16, activation="relu")(state_input)
 #     state_out = layers.BatchNormalization()(state_out)
-#     state_out = layers.Dense(32, activation="relu")(state_out)
+#     state_out = layers.Dense(32, activation="relu")(state_out) 
 #     state_out = layers.BatchNormalization()(state_out)
 
 #     # Action as input
@@ -278,7 +278,6 @@ def load_map(load_path):
 
 if __name__ == '__main__':
     #print('sys.argv:', sys.argv)    
-    print("Started dagger.py inside the main \n\n\n\n\n\n\n")
 
     play = False
     load_path = None
@@ -532,7 +531,7 @@ if __name__ == '__main__':
             print("\n\nDagger iteration: ", itr, " of ", dagger_itr)
             for i in range(steps):
                 #print('obs:', obs)
-                #rospy.sleep(0.1)
+                rospy.sleep(0.05)
                 latest_pcl = env.get_latest_pcl_latent()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
@@ -632,6 +631,7 @@ if __name__ == '__main__':
             # print("Shape of one element of concat_input: ", concatenated_input[0].shape, "One element of concated_input: ", concatenated_input[0])
             # train actor
             concat_input = np.concatenate((robot_state_all, latent_pcl_all), axis=1)
+            print("\nLength of dataset: ", len(concat_input))
             #print(concat_input)
             print("Dagger training for actor")
             actor.fit(concat_input, actions_all,
@@ -644,4 +644,5 @@ if __name__ == '__main__':
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_04_05_model128_128_64_30latent_old_map12222222222222222h5')
+            actor.save_weights(save_path + '/dagger_pcl_07_05_model128_128_64_50latent_random.h5')
+
