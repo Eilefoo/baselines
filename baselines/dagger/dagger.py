@@ -12,6 +12,7 @@ from baselines.dagger.pid import PID
 #from baselines.dagger.buffer import Buffer
 import matplotlib.pyplot as plt
 
+from datetime import datetime
 from tensorboardX import SummaryWriter
 import timeit
 from baselines.ddpg.noise import AdaptiveParamNoiseSpec, NormalActionNoise, OrnsteinUhlenbeckActionNoise
@@ -22,9 +23,9 @@ from voxblox_msgs.srv import FilePath
 from geometry_msgs.msg import Pose
 
 batch_size = 32
-steps = 150000
+steps = 128
 nb_training_epoch = 50
-dagger_itr = 30
+dagger_itr = 2
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
@@ -43,8 +44,8 @@ class Logger:
 
     def save_performance_stats(self):
         performance_statistics = self.info_returns
-        #summation_vector = np.sum(performance_statics,axis=1)
-        #performance_statistics = performance_vector/summation_vector[:,None] #Now each element is a percentage
+        summation_vector = np.sum(performance_statics,axis=1)
+        performance_statistics = performance_vector/summation_vector[:,None] #Now each element is a percentage
         performance_statistics.to_file(self.logdir+'/dagger_performance_stats.csv',sep=',')
 
     def save_model_parameters(self,model,env):
@@ -691,7 +692,7 @@ if __name__ == '__main__':
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_04_05_model128_128_64_30latent_old_map12222222222222222h5')
+            actor.save_weights(save_path + '/multiplehead_dagger_pcl_12_05_model128_128_64_30latent_box2.h5')
     
     #Save the dagger performance to file
     logger.save_performance_stats()

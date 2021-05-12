@@ -53,7 +53,7 @@ class RotorsWrappers:
 
         self.ob_robot_state_shape = OB_ROBOT_STATE_SHAPE        
         
-        self.pcl_latent_dim = 50 #Eilef
+        self.pcl_latent_dim = 30 #Eilef
         self.pcl_latent_latest = []
         self.pc_slice_stack = [] 
 
