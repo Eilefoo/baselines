@@ -25,9 +25,9 @@ from planner_msgs.srv import planner_search, planner_searchRequest
 from voxblox_msgs.srv import FilePath
 from geometry_msgs.msg import Pose
 
-batch_size = 8
+batch_size = 32
 nb_training_epoch = 50
-steps = 32
+steps = 4000
 dagger_itr = 2
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
@@ -821,7 +821,7 @@ if __name__ == '__main__':
             #     output_file = open('results.txt', 'w')
             
             print("Dagger training for actor")
-            actor.fit(shuffled_both_sides[:,0:56], shuffled_both_sides[:,56:60],
+            actor.fit(shuffled_both_sides[:,0:env.total_env_obs], shuffled_both_sides[:,env.total_env_obs:env.total_env_obs+4],
                             batch_size=batch_size,
                             epochs=nb_training_epoch,
                             shuffle=True, verbose=True,initial_epoch=logger.current_training_round*logger.training_epochs,callbacks=[logger.tensorboard_callback])

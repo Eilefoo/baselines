@@ -176,7 +176,7 @@ class RotorsWrappers:
         return [seed]
 
     def get_params(self):
-        self.initial_goal_generation_radius = rospy.get_param('initial_goal_generation_radius', 6.0)
+        self.initial_goal_generation_radius = rospy.get_param('initial_goal_generation_radius', 5.0)
         self.set_goal_generation_radius(self.initial_goal_generation_radius)
         self.waypoint_radius = rospy.get_param('waypoint_radius', 0.2)
         self.robot_collision_frame = rospy.get_param(
@@ -210,14 +210,14 @@ class RotorsWrappers:
 
         self.max_wp_x = rospy.get_param('max_waypoint_x', 8.0)
         self.max_wp_y = rospy.get_param('max_waypoint_y', 2.5)
-        self.max_wp_z = rospy.get_param('max_waypoint_z', 4.0) 
+        self.max_wp_z = rospy.get_param('max_waypoint_z', 5.0) 
 
         self.min_wp_x = rospy.get_param('min_waypoint_x', -8.0)
         self.min_wp_y = rospy.get_param('min_waypoint_y', -2.5)
         self.min_wp_z = rospy.get_param('min_waypoint_z', 2.0)                
 
         self.min_init_z = rospy.get_param('min_initial_z', 2.0)
-        self.max_init_z = rospy.get_param('max_initial_z', 4.0)
+        self.max_init_z = rospy.get_param('max_initial_z', 5.0)
 
         self.control_rate = rospy.get_param('control_rate', 20.0)
 
@@ -488,12 +488,12 @@ class RotorsWrappers:
         #sphere_marker_array = MarkerArray()
         u = random.random()
         v = random.random()
-        #theta = u * 2.0 * np.pi
-        front_or_back = random.uniform(0,1)
-        if(front_or_back > 0.5):
-            theta = random.uniform(-np.pi/6, np.pi/6)
-        else:
-            theta = random.uniform(5*np.pi/6, 7*np.pi/6)
+        theta = u * 2.0 * np.pi
+        # front_or_back = random.uniform(0,1)
+        # if(front_or_back > 0.5):
+        #     theta = random.uniform(-np.pi/6, np.pi/6)
+        # else:
+        #     theta = random.uniform(5*np.pi/6, 7*np.pi/6)
         #phi = np.arccos(2.0 * v - 1.0)
         phi = random.uniform(3*np.pi/8, 5*np.pi/8)
         # while np.isnan(phi):
@@ -657,7 +657,7 @@ class RotorsWrappers:
         self.current_goal = goal
         self.draw_new_goal(goal)
         self.goal_training_publisher.publish(goal)
-        self.reset_timer(r * 2.5)
+        self.reset_timer(r * 3)
 
         obs = self.get_new_obs()
         return obs        

@@ -1,6 +1,7 @@
 #!/usr/bin/env python
 
 import sys
+import os
 import rospy
 import numpy as np
 import tensorflow as tf
@@ -23,9 +24,9 @@ from voxblox_msgs.srv import FilePath
 from geometry_msgs.msg import Pose
 
 batch_size = 32
-steps = 128
+steps = 4000
 nb_training_epoch = 50
-dagger_itr = 2
+dagger_itr = 40
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
@@ -35,18 +36,20 @@ save_path = "/home/eilefoo/models/dagger"
 
 class Logger:
     def __init__(self):
-        self.logdir = "../logs/"+ f'{datetime.now().day:02d}-{datetime.now().month:02d}_{datetime.now().hour:02d}:{datetime.now().minute:02d}'
+        self.logdir = "logs/"+ f'{datetime.now().day:02d}-{datetime.now().month:02d}_{datetime.now().hour:02d}:{datetime.now().minute:02d}'
         self.tensorboard_callback = keras.callbacks.TensorBoard(log_dir=self.logdir)
         self.info_returns = []
         self.training_epochs = nb_training_epoch #we know that for every set of epochs, there will be one value for percentage collision, reach goal and timeout
         self.current_training_round = 0
+        if not os.path.exists(self.logdir):
+            os.makedirs(self.logdir)
 
 
     def save_performance_stats(self):
-        performance_statistics = self.info_returns
-        summation_vector = np.sum(performance_statics,axis=1)
-        performance_statistics = performance_vector/summation_vector[:,None] #Now each element is a percentage
-        performance_statistics.to_file(self.logdir+'/dagger_performance_stats.csv',sep=',')
+        performance_statistics = np.array(self.info_returns)
+        # summation_vector = np.sum(performance_statics,axis=1)
+        # performance_statistics = performance_vector/summation_vector[:,None] #Now each element is a percentage
+        performance_statistics.tofile(self.logdir+'/dagger_performance_stats.csv',sep=',')
 
     def save_model_parameters(self,model,env):
         file1 = open(self.logdir+"/network_and_env_training_summary.txt","w")
@@ -351,7 +354,7 @@ if __name__ == '__main__':
             print(e)
 
     #tf.keras.backend.set_floatx('float32')|
-    save_path = "/home/eilefoo/models/dagger"
+    save_path = "/home/eilefoo/reinforcement_learning_ws/src/model_data/dagger"
 
     #Initialize progress saver
     logger = Logger()
@@ -372,6 +375,8 @@ if __name__ == '__main__':
     episode_rew_queue = deque(maxlen=10)
 
     logger.save_model_parameters(actor, env)
+    tsdf_filename = "/home/eilefoo/maps/box2_more_stoned.tsdf"
+    
 
     env_reset_counter = 0 
     num_iterations = 0
@@ -382,12 +387,14 @@ if __name__ == '__main__':
         reward_sum = 0.0
         itr = 0
         rospy.sleep(0.5)
-        env.pause()
-        tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-        scrambler_bool = env.scramble_world()
+        
+        if(world_scramble):
+            env.pause()
+            tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
+            scrambler_bool = env.scramble_world()
+            env_reset_counter = 0
+            env.unpause()
 
-        env_reset_counter = 0
-        env.unpause()
         while True:
             for i in range(steps):
                 #print('obs:', obs)
@@ -409,13 +416,14 @@ if __name__ == '__main__':
                 reward_sum += reward
 
                 if done is True:
-                    env_reset_counter = env_reset_counter +1
-                    if (env_reset_counter > 1): 
-                        env.pause()
+                    if(world_scramble):
+                        env_reset_counter = env_reset_counter +1
+                        if (env_reset_counter > 1): 
+                            env.pause()
 
-                        scrambler_bool = env.scramble_world()
-                        env_reset_counter = 0
-                        env.unpause()
+                            scrambler_bool = env.scramble_world()
+                            env_reset_counter = 0
+                            env.unpause()
 
                     episode_rew_queue.appendleft(reward_sum)
                     reward_sum = 0.0
@@ -433,6 +441,7 @@ if __name__ == '__main__':
 
         actions_all = np.zeros((0, nb_actions))
         rewards_all = np.zeros((0, ))
+        map_load_service(tsdf_filename)
 
         obs_list = []
         augmented_obs_list = []
@@ -463,7 +472,7 @@ if __name__ == '__main__':
             latest_pcl = env.get_latest_pcl_latent()
             #print("This is the action from the expert, ", action, "The length is: ", len(action))
             while len(action) == 0:
-                print('no expert path, action is: ', action)
+                print('no expert path, action is: ', action, "counter is: ", counter)
                 #obs = env.reset()
                 #print("The observations after reseting: \n\n\n\n", augmented_obs, "\n\n\n\n")
                 augmented_obs = env.get_augmented_obs()
@@ -475,6 +484,7 @@ if __name__ == '__main__':
                     obs = env.reset()
                     augmented_obs = env.get_augmented_obs()
                     rospy.sleep(0.3)
+                    counter = 0 
 
             #Saving the data
             obs_list.append(np.array([obs]))
@@ -572,7 +582,7 @@ if __name__ == '__main__':
                 latest_pcl = env.get_latest_pcl_latent()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
-                concatenated_input = np.reshape(concatenated_input,(1,56))
+                concatenated_input = np.reshape(concatenated_input,(1,env.total_env_obs))
                 #print("Concatenated input shape: ", np.shape(concatenated_input))
             
                 #start = timeit.default_timer()
@@ -612,11 +622,11 @@ if __name__ == '__main__':
                             env.unpause()
 
                     #Record 
-                    if info.status == "reach goal":
+                    if info['status'] == "reach goal":
                         result_statistic[0] +=1
-                    if info.status == "collide":
+                    if info['status'] == "collide":
                         result_statistic[1] +=1
-                    if info.status == "timeout":
+                    if info['status'] == "timeout":
                         result_statistic[2] +=1
 
                     
@@ -692,7 +702,7 @@ if __name__ == '__main__':
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/multiplehead_dagger_pcl_12_05_model128_128_64_30latent_box2.h5')
+            actor.save_weights(save_path + '/dagger_pcl_14_05_model128_128_64_30latent_box2_run2.h5')
     
     #Save the dagger performance to file
     logger.save_performance_stats()

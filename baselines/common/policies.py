@@ -4,7 +4,7 @@ from baselines.common.distributions import make_pdtype
 from baselines.dagger.dagger import build_actor_model
 import gym
 
-DAGGER_ACTOR_WEIGHT = '/home/eilefoo/models/dagger/dagger_pcl_17_04_new_pc_model128_128_64_half_speed_30latent_best_new_after_Huan.h5'
+DAGGER_ACTOR_WEIGHT = '/home/eilefoo/reinforcement_learning_ws/src/model_data/dagger/model/run_01/dagger_pcl_12_05_model128_128_64_30latent_box2.h5'
 
 class PolicyWithValue(tf.Module):
     """
@@ -32,6 +32,7 @@ class PolicyWithValue(tf.Module):
         self.dagger_model.load_weights(DAGGER_ACTOR_WEIGHT)
         self.policy_network.get_layer('fcletsgoo1').set_weights(self.dagger_model.get_layer('fc1').get_weights())
         self.policy_network.get_layer('fcletsgoo2').set_weights(self.dagger_model.get_layer('fc2').get_weights())
+        self.policy_network.get_layer('fcletsgoo3').set_weights(self.dagger_model.get_layer('fc3').get_weights())
 
         self.value_network = value_network or policy_network # not including final layer
         self.value_network.summary()
