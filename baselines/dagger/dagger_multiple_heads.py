@@ -27,7 +27,7 @@ from geometry_msgs.msg import Pose
 
 batch_size = 32
 nb_training_epoch = 50
-steps = 4000
+steps = 5
 dagger_itr = 2
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
@@ -68,26 +68,21 @@ class Logger:
 
 
 class MultipleHeadActor(keras.Model):
-
-
-    def set_use_left_action(self,action_bool):
-        self.use_left_action = action_bool
+    
+    def reset_loss_weight(self):
+        self.num_epoch_for_loss = 0
 
     #@tf.function
     def train_step(self, data):
-
+        print("epoch=",self.num_epoch_for_loss)
         x_true, y_true = data #Both these variables are iterators!!! 
         # x_true_left, x_true_right = tf.split(x_true, num_or_size_splits=2)
         # y_true_left, y_true_right = tf.split(y_true, num_or_size_splits=2)
         print("Inside train_step: \n")
+        self.bce_loss_weight = tf.math.maximum(tf.constant(0, dtype=tf.float32), 1-tf.math.exp(tf.cast(-(self.num_epoch_for_loss - 10),dtype=tf.float32)))
         with tf.GradientTape() as tape:
 
             y_pred = self(x_true, training=True) #Forward pass
-
-            # if(self.use_left_action == True):
-            #     y_pred = [y_pred[0],y_pred[2]]
-            # else:
-            #     y_pred = [y_pred[1],y_pred[2]]
 
             print("y_pred: ", y_pred, "\ny_true: ", y_true, "\nIs tensor? ", keras.backend.is_keras_tensor(y_pred[1]), "x_true: ", x_true )
             #print(type(sess.run((y_pred))))
@@ -104,22 +99,8 @@ class MultipleHeadActor(keras.Model):
         return {"loss ": total_loss}
     
     def total_loss(self, y_pred, y_true): # y true [None, 3], y_pred = (     )
-        # zero = tf.constant([0.0])
-        # mask = tf.math.greater(y_true[...,1],zero)
-        
-        # y_pred_right = y_pred[1][mask]
-        # y_pred_left = y_pred[0][~mask]
+        self.num_epoch_for_loss = self.num_epoch_for_loss +1
 
-
-        # action_loss = tf.losses.mse(y_pred_right,y_true[mask]) + tf.losses.mse(y_pred_left,y_true[~mask])
-        # print("\nin this part of the loss function, y_pred: ", y_pred)
-
-        # y_pred_dir = y_pred[2]
-        # print("Right before the direction loss calculation, \ny_pred_dir= ", y_pred_dir[:], "\nmask: ", mask,"\n\n")
-        
-        # direction_loss = keras.losses.binary_crossentropy(mask,y_pred_dir[:])
-        # print("Getting closer to the end now")
-        # total_loss = action_loss + direction_loss
         y_true_acc, y_true_dir = tf.split(y_true, [3,1],axis=1)
         y_true_dir_bool = tf.cast(y_true_dir, tf.bool)
         y_pred_left_acc = y_pred[0]
@@ -134,7 +115,8 @@ class MultipleHeadActor(keras.Model):
         print("\nRight before the direction loss calculation, \ny_true= ",y_true_dir, "\npred: ", y_pred_dir,"\n\n")
         direction_loss = keras.losses.binary_crossentropy(y_true_dir,y_pred_dir)
         
-        total_loss = action_loss + direction_loss
+        total_loss = action_loss + tf.math.multiply(self.bce_loss_weight,direction_loss)
+
         return total_loss 
         
 
@@ -326,6 +308,7 @@ def build_actor_model(ob_robot_state_shape, ob_pcl_shape, nb_actions):
     multiple_head_actor = MultipleHeadActor(inputs=[backbone.inputs], outputs=[output_layer_left_action, output_layer_right_action, output_layer_predictor ], name='actor_net')
     #multiple_head_actor = MultipleHeadActor()
     multiple_head_actor.compile(optimizer= tf.keras.optimizers.Adam(lr=1e-4))
+    multiple_head_actor.reset_loss_weight()
     return multiple_head_actor
 
 # def build_critic_model(input_shape):
@@ -819,7 +802,7 @@ if __name__ == '__main__':
             #     print("traning right side \n")  
             #     actor.fit(np.concatenate((robot_right_state_all, latent_right_pcl_all), axis=1), teacher_actions_right_all, batch_size=batch_size, epochs=nb_training_epoch, shuffle=True, verbose=True)
             #     output_file = open('results.txt', 'w')
-            
+            print("The num epoch variable in the loss is: ", actor.num_epoch_for_loss)
             print("Dagger training for actor")
             actor.fit(shuffled_both_sides[:,0:env.total_env_obs], shuffled_both_sides[:,env.total_env_obs:env.total_env_obs+4],
                             batch_size=batch_size,

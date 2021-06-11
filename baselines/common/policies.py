@@ -4,7 +4,9 @@ from baselines.common.distributions import make_pdtype
 from baselines.dagger.dagger import build_actor_model
 import gym
 
-DAGGER_ACTOR_WEIGHT = '/home/eilefoo/reinforcement_learning_ws/src/model_data/dagger/model/run_01/dagger_pcl_12_05_model128_128_64_30latent_box2.h5'
+#DAGGER_ACTOR_WEIGHT = '/home/eilefoo/reinforcement_learning_ws/src/model_data/dagger/final_world/large_network/run_large_network/dagger_pcl_01_06_model128_256_128_50latent_final.h5'
+#DAGGER_ACTOR_WEIGHT = "/home/eilefoo/reinforcement_learning_ws/src/model_data/ppo/large_network_small_step/ppo_model_itr_165.h5"
+DAGGER_ACTOR_WEIGHT = "/home/eilefoo/reinforcement_learning_ws/src/model_data/dagger/final_world/medium_network/dagger_pcl_itr10.h5"
 
 class PolicyWithValue(tf.Module):
     """
@@ -27,12 +29,13 @@ class PolicyWithValue(tf.Module):
         print('PolicyWithValue: trpo actor model')
         self.policy_network.summary()
         print('PolicyWithValue: dagger actor model')
-        self.dagger_model = build_actor_model(6, 30, 3)
+        self.dagger_model = build_actor_model(6, 50, 3)
         self.dagger_model.summary()
         self.dagger_model.load_weights(DAGGER_ACTOR_WEIGHT)
-        self.policy_network.get_layer('fcletsgoo1').set_weights(self.dagger_model.get_layer('fc1').get_weights())
-        self.policy_network.get_layer('fcletsgoo2').set_weights(self.dagger_model.get_layer('fc2').get_weights())
-        self.policy_network.get_layer('fcletsgoo3').set_weights(self.dagger_model.get_layer('fc3').get_weights())
+        self.policy_network.get_layer('fcl1').set_weights(self.dagger_model.get_layer('fc1').get_weights())
+        self.policy_network.get_layer('fcl2').set_weights(self.dagger_model.get_layer('fc2').get_weights())
+        #self.policy_network.get_layer('fcl3').set_weights(self.dagger_model.get_layer('fc3').get_weights())
+
 
         self.value_network = value_network or policy_network # not including final layer
         self.value_network.summary()
@@ -40,7 +43,7 @@ class PolicyWithValue(tf.Module):
         self.initial_state = None
 
         # Based on the action space, will select what probability distribution type
-        self.pdtype = make_pdtype(policy_network.output_shape, ac_space, init_scale=1, activation=tf.keras.activations.tanh) #init_scale = 0.01
+        self.pdtype = make_pdtype(policy_network.output_shape, ac_space, init_scale=0.001, activation=tf.keras.activations.tanh) #init_scale = 0.01
         self.pdtype.matching_fc.set_weights(self.dagger_model.get_layer('output').get_weights())
 
         if estimate_q:
@@ -48,6 +51,14 @@ class PolicyWithValue(tf.Module):
             self.value_fc = fc(self.value_network.output_shape, 'q', ac_space.n)
         else:
             self.value_fc = fc(self.value_network.output_shape, 'vf', 1)
+    
+    def create_network_for_saving(self):
+        current_model = build_actor_model(6,50,3)
+        current_model.get_layer('fc1').set_weights(self.policy_network.get_layer('fcl1').get_weights())
+        current_model.get_layer('fc2').set_weights(self.policy_network.get_layer('fcl2').get_weights())
+        #current_model.get_layer('fc3').set_weights(self.policy_network.get_layer('fcl3').get_weights())
+        current_model.get_layer('output').set_weights(self.pdtype.matching_fc.get_weights())
+        return current_model
 
     @tf.function
     def step(self, observation):

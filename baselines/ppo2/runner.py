@@ -1,5 +1,6 @@
 import numpy as np
 import tensorflow as tf
+import random
 import rospy
 from baselines.common.runners import AbstractEnvRunner
 
@@ -23,6 +24,16 @@ class Runner(AbstractEnvRunner):
         mb_obs, mb_rewards, mb_actions, mb_values, mb_dones, mb_neglogpacs = [],[],[],[],[],[]
         mb_states = self.states
         epinfos = []
+        environment_number = random.randint(1,6)
+        self.env.envs[0].pause()
+        environment_number += 1
+        if (environment_number > 6):
+            environment_number = 1
+
+        self.env.envs[0].scramble_world('set%i' % environment_number)
+        
+        self.env.envs[0].unpause()
+        iteration = 0
         # For n in range number of steps
         rospy.sleep(0.2)
         for _ in range(self.nsteps):
@@ -44,7 +55,9 @@ class Runner(AbstractEnvRunner):
             mb_values.append(values._numpy())
             mb_neglogpacs.append(neglogpacs._numpy())
             mb_dones.append(self.dones)
-            print("total obs: ", total_obs, "\nAction: ", [actions])
+            iteration = iteration +1 
+            print("Iteration ", iteration)
+            #print("total obs: ", total_obs, "\nAction: ", [actions])
             # Take actions in env and look the results
             # Infos contains a ton of useful informations
             self.obs[:], rewards, self.dones, infos = self.env.step([actions])
@@ -52,6 +65,15 @@ class Runner(AbstractEnvRunner):
                 maybeepinfo = info.get('episode')
                 if maybeepinfo: epinfos.append(maybeepinfo)
             mb_rewards.append(rewards)
+
+            if(self.dones[0]): #Eilef
+                self.env.envs[0].pause()
+                environment_number += 1
+                if (environment_number > 6):
+                    environment_number = 1
+                self.env.envs[0].scramble_world('set%i' % environment_number)
+
+                self.env.envs[0].unpause()
 
         #batch of steps to batch of rollouts
         mb_obs = np.asarray(mb_obs, dtype=self.obs.dtype)

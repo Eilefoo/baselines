@@ -17,6 +17,7 @@ from sensor_msgs.msg import Image
 
 
 from pointcloud_utils.msg import LatSpace
+from pointcloud_utils.srv import scramble
 
 from gym import core, spaces
 from gym.utils import seeding
@@ -53,7 +54,7 @@ class RotorsWrappers:
 
         self.ob_robot_state_shape = OB_ROBOT_STATE_SHAPE        
         
-        self.pcl_latent_dim = 30 #Eilef
+        self.pcl_latent_dim = 50 #Eilef
         self.pcl_latent_latest = []
         self.pc_slice_stack = [] 
 
@@ -70,6 +71,7 @@ class RotorsWrappers:
         self.msg_cnt = 0
         self.pcl_feature = np.array([])
         self.num_envs = 1 #For ppo2 implementation
+        self.shortest_distance = 0 
 
         if(self.evaluate):
             self.recent_binary_crossentropy_list = [0,0,0,0,0] #5 elements
@@ -124,9 +126,13 @@ class RotorsWrappers:
         self.pause_physics_proxy = rospy.ServiceProxy('/gazebo/pause_physics', Empty)
         self.unpause_physics_proxy = rospy.ServiceProxy('/gazebo/unpause_physics', Empty)
         self.reset_tsdf_service = rospy.ServiceProxy('/tsdf_server/clear_map', Empty)
-        self.world_scramble_service = rospy.ServiceProxy('/world_randomize_service', Trigger)
-        self.world_to_tsdf_converter_service = rospy.ServiceProxy('/gazebo/save_voxblox_ground_truth_to_file', FilePath)
+        #self.world_scramble_service = rospy.ServiceProxy('/world_randomize_service', Trigger)
+        self.world_scramble_service = rospy.ServiceProxy('/world_randomize_service', scramble)
         
+        self.world_to_tsdf_converter_service = rospy.ServiceProxy('/gazebo/save_voxblox_ground_truth_to_file', FilePath)
+        self.world_to_tsdf_expert_saver = rospy.ServiceProxy('/gbplanner_node/save_map', FilePath)
+
+                
         self.robot2_pose = Pose()
         self.robot2_pose.position.x = self.max_wp_x + 5.0
         self.robot2_pose.position.y = self.max_wp_y + 5.0
@@ -176,9 +182,9 @@ class RotorsWrappers:
         return [seed]
 
     def get_params(self):
-        self.initial_goal_generation_radius = rospy.get_param('initial_goal_generation_radius', 5.0)
+        self.initial_goal_generation_radius = rospy.get_param('initial_goal_generation_radius', 7.0)
         self.set_goal_generation_radius(self.initial_goal_generation_radius)
-        self.waypoint_radius = rospy.get_param('waypoint_radius', 0.2)
+        self.waypoint_radius = rospy.get_param('waypoint_radius', 1.0)
         self.robot_collision_frame = rospy.get_param(
             'robot_collision_frame',
             'delta::delta/base_link::delta/base_link_fixed_joint_lump__delta_collision_collision'
@@ -190,13 +196,13 @@ class RotorsWrappers:
         self.ground_collision_frame = rospy.get_param(
             'ground_collision_frame', 'ground_plane::link::collision')
         #self.Q_state = rospy.get_param('Q_state', [0.6*2, 0.6*2, 1.0*2])#, 0.15*2, 0.15*2, 0.25*2])
-        self.Q_state = rospy.get_param('Q_state', [0.6*2, 0.6*2, 1.0*2, 0.15*2, 0.15*2, 0.25*2])
+        self.Q_state = rospy.get_param('Q_state', [0.4*2, 0.4*2, 1.0*2, 0.3*2, 0.3*2, 0.25*2])
         #self.Q_state = rospy.get_param('Q_state', [0.6*2, 0.6*2, 1.0*2, 0.15*2, 0.15*2, 0.25*2, 0.1, 0.1, 0.1])
 
         self.Q_state = np.array(list(self.Q_state))
         self.Q_state = np.diag(self.Q_state)
         print('Q_state:', self.Q_state)
-        self.R_action = rospy.get_param('R_action', [0.001, 0.001, 0.001])
+        self.R_action = rospy.get_param('R_action', [0.01, 0.01, 0.01])
         self.R_action = np.diag(self.R_action)
         print('R_action:', self.R_action)
         self.R_action = np.array(list(self.R_action))
@@ -210,14 +216,14 @@ class RotorsWrappers:
 
         self.max_wp_x = rospy.get_param('max_waypoint_x', 8.0)
         self.max_wp_y = rospy.get_param('max_waypoint_y', 2.5)
-        self.max_wp_z = rospy.get_param('max_waypoint_z', 5.0) 
+        self.max_wp_z = rospy.get_param('max_waypoint_z', 7.0) 
 
-        self.min_wp_x = rospy.get_param('min_waypoint_x', -8.0)
+        self.min_wp_x = rospy.get_param('min_waypoint_x', -7.0)
         self.min_wp_y = rospy.get_param('min_waypoint_y', -2.5)
         self.min_wp_z = rospy.get_param('min_waypoint_z', 2.0)                
 
         self.min_init_z = rospy.get_param('min_initial_z', 2.0)
-        self.max_init_z = rospy.get_param('max_initial_z', 5.0)
+        self.max_init_z = rospy.get_param('max_initial_z', 7.0)
 
         self.control_rate = rospy.get_param('control_rate', 20.0)
 
@@ -245,9 +251,12 @@ class RotorsWrappers:
             else:
                 rospy.logdebug('Contact robot2 not found yet ...')           
 
-    def scramble_world(self):
+
+    def scramble_world(self,mode):
+
+        print("Ready to send scramble service ", mode)
         try:
-            response = self.world_scramble_service()
+            response = self.world_scramble_service(mode)
             print("World scrambler response: ", response, "\n")
             return True
         except rospy.ServiceException as e:
@@ -262,6 +271,17 @@ class RotorsWrappers:
             return True
         except rospy.ServiceException as e:
             print("world to tsdf converter service call failed: %s"%e)
+            return False
+
+
+    def expert_map_saver(self,save_path):
+        msg = save_path
+        try:
+            response = self.world_to_tsdf_expert_saver(msg)
+            print("Tsdf converter response: ", response, "\n")
+            return True
+        except rospy.ServiceException as e:
+            print("world_to_tsdf_expert_saver call failed: %s"%e)
             return False
 
 
@@ -292,7 +312,11 @@ class RotorsWrappers:
 
         Ru = self.R_action.dot(action)
         uT_Ru = action.transpose().dot(Ru) / 1000.0
-        reward = - uT_Ru #- self.shortest_distance * 0.1
+        reward = - uT_Ru - self.shortest_distance * 0.1
+        
+        if(new_obs[2] > 8 or new_obs[2] < 2): #Penalizing flying above the map or dangerously close to the ground
+            reward = reward - 1
+        #print("Shortest distance: ",self.shortest_distance)
         #reward = -0.01
         info = {'status':'none'}
         self.done = False        
@@ -488,12 +512,12 @@ class RotorsWrappers:
         #sphere_marker_array = MarkerArray()
         u = random.random()
         v = random.random()
-        theta = u * 2.0 * np.pi
-        # front_or_back = random.uniform(0,1)
-        # if(front_or_back > 0.5):
-        #     theta = random.uniform(-np.pi/6, np.pi/6)
-        # else:
-        #     theta = random.uniform(5*np.pi/6, 7*np.pi/6)
+        #theta = u * 2.0 * np.pi
+        front_or_back = random.uniform(0,1)
+        if(front_or_back > 0.5):
+            theta = random.uniform(-np.pi/6, np.pi/6)
+        else:
+            theta = random.uniform(5*np.pi/6, 7*np.pi/6)
         #phi = np.arccos(2.0 * v - 1.0)
         phi = random.uniform(3*np.pi/8, 5*np.pi/8)
         # while np.isnan(phi):
@@ -513,6 +537,8 @@ class RotorsWrappers:
         # limit z of goal
         [x, y, z] = np.clip([x,y,z], [self.min_wp_x - robot_pose.position.x, self.min_wp_y - robot_pose.position.y, self.min_wp_z - robot_pose.position.z],
                                     [self.max_wp_x - robot_pose.position.x, self.max_wp_y - robot_pose.position.y, self.max_wp_z - robot_pose.position.z])
+        if(((x**2+y**2+z**2)/3) < self.goal_generation_radius - 3):
+            return goal, 0 #Will instantiate new reset
 
         rospy.loginfo_throttle(2, 'New Goal: (%.3f , %.3f , %.3f)', x, y, z)
         goal.position.x = x
@@ -633,7 +659,7 @@ class RotorsWrappers:
         # check if the end position collides with env: fix it, so stupid!
         goal, r = self.generate_new_goal(start_pose)
         _, collide = self.spawn_robot2(goal)
-        while collide:
+        while collide or r == 0:
             #rospy.loginfo('INVALID end goal: (%.3f , %.3f , %.3f)', goal.position.x, goal.position.y, goal.position.z)
             goal, r = self.generate_new_goal(start_pose)
             _, collide = self.spawn_robot2(goal)
@@ -811,6 +837,23 @@ class RotorsWrappers:
 
         rospy.sleep(0.1)        
         return new_position.pose, self.collide2
+
+    def spawn_robot_afar(self): #For clearing away the robot before constructing map
+        new_position = ModelState()
+        new_position.model_name = 'delta_collision_check'
+        new_position.reference_frame = 'world'
+
+        new_position.pose.position.x = 20
+        new_position.pose.position.y = 20
+        new_position.pose.position.z = 20
+        new_position.pose.orientation.x = 0
+        new_position.pose.orientation.y = 0
+        new_position.pose.orientation.z = 0
+        new_position.pose.orientation.w = 1
+
+        self.model_state_publisher.publish(new_position)
+        return
+
 
     def reset_timer(self, time):
         #rospy.loginfo('Resetting the timeout timer')

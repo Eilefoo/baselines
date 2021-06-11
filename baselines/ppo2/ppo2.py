@@ -1,6 +1,7 @@
 import time
 import numpy as np
 import tensorflow as tf
+from tensorflow import keras
 import os.path as osp
 from baselines import logger
 from collections import deque
@@ -17,9 +18,9 @@ def constfn(val):
         return val
     return f
 
-def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2048, ent_coef=0.0, lr=3e-4,
+def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2048, ent_coef=0.0, lr=3e-5,
             vf_coef=0.5,  max_grad_norm=0.5, gamma=0.99, lam=0.95,
-            log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.2,
+            log_interval=10, nminibatches=4, noptepochs=4, cliprange=0.1,
             save_interval=0, load_path=None, model_fn=None, **network_kwargs):
     '''
     Learn policy using PPO algorithm (https://arxiv.org/abs/1707.06347)
@@ -121,6 +122,8 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
 
     # Start total timer
     tfirststart = time.perf_counter()
+    
+    max_mean_loss = -100000
 
     nupdates = total_timesteps//nbatch
     for update in range(1, nupdates+1):
@@ -186,7 +189,10 @@ def learn(*, network, env, total_timesteps, eval_env = None, seed=None, nsteps=2
                 logger.logkv('loss/' + lossname, lossval)
 
             logger.dumpkvs()
-
+        
+        current_model = model.train_model.create_network_for_saving()
+        current_model.save_weights('ppo_model_itr_' + str(update+56) + '.h5')
+        
     return model
 # Avoid division error when calculate the mean (in our case if epinfo is empty returns np.nan, not return an error)
 def safemean(xs):

@@ -1,7 +1,9 @@
 #!/usr/bin/env python
-
-import sys
 import os
+import importlib
+import sys
+
+
 import rospy
 import numpy as np
 import tensorflow as tf
@@ -12,6 +14,7 @@ from baselines.common.rotors_wrappers import RotorsWrappers
 from baselines.dagger.pid import PID
 #from baselines.dagger.buffer import Buffer
 import matplotlib.pyplot as plt
+
 
 from datetime import datetime
 from tensorboardX import SummaryWriter
@@ -25,8 +28,9 @@ from geometry_msgs.msg import Pose
 
 batch_size = 32
 steps = 4000
+dagger_steps = 1000
 nb_training_epoch = 50
-dagger_itr = 40
+dagger_itr = 30
 dagger_buffer_size = 40000
 gamma = 0.99 # Discount factor for future rewards
 tau = 0.001 # Used to update target networks
@@ -215,9 +219,9 @@ def build_backbone(layer_input_shape):
     # FC layers
     h1 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc1', activation='relu')(robot_state_input)
-    h2 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
+    h2 = tf.keras.layers.Dense(units=256, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc2', activation='relu')(h1)
-    h3 = tf.keras.layers.Dense(units=64, kernel_initializer=ortho_init(np.sqrt(2)),
+    h3 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
                                 name='fc3', activation='relu')(h2)
     backbone_model = tf.keras.Model(inputs=robot_state_input, outputs=[h3], name='backbone_net')
     return backbone_model
@@ -375,12 +379,14 @@ if __name__ == '__main__':
     episode_rew_queue = deque(maxlen=10)
 
     logger.save_model_parameters(actor, env)
-    tsdf_filename = "/home/eilefoo/maps/box2_more_stoned.tsdf"
+    # tsdf_filename = "/home/eilefoo/maps/box2_more_stoned.tsdf"
+    #tsdf_filename = "/home/eilefoo/maps/box2_more_stoned_from_ground_truth.tsdf"
+    #tsdf_filename = "/home/eilefoo/test_env_2.tsdf"
+    tsdf_filename = "/home/eilefoo/maps/final_testing/tsdf_files/random_env_1.tsdf"
     
-
-    env_reset_counter = 0 
+    environment_number = 1
+    env_reset_counter = 0
     num_iterations = 0
-
     max_mean_return = -100000
     if play:
         obs = env.reset()
@@ -389,16 +395,20 @@ if __name__ == '__main__':
         rospy.sleep(0.5)
         
         if(world_scramble):
+            #tsdf_filename = "/home/eilefoo/maps/random_generated_maps/random_1.tsdf" #"/home/eilefoo/maps/random_generated_maps/random_1.tsdf"
+            tsdf_filename = '/home/eilefoo/maps/final_testing/tsdf_files/random_env_%i.tsdf' % (environment_number)
             env.pause()
-            tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-            scrambler_bool = env.scramble_world()
-            env_reset_counter = 0
+
+            mode = "set1"
+            env.scramble_world(mode)
             env.unpause()
+            env_reset_counter = 0
+            rospy.sleep(1)
 
         while True:
             for i in range(steps):
                 #print('obs:', obs)
-                rospy.sleep(0.1)
+                
                 latest_pcl = env.get_latest_pcl_latent()
 
                 concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
@@ -418,17 +428,31 @@ if __name__ == '__main__':
                 if done is True:
                     if(world_scramble):
                         env_reset_counter = env_reset_counter +1
-                        if (env_reset_counter > 1): 
+                        if (env_reset_counter >=1): 
+                            # env.pause()
+                            # tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
+                            # scrambler_bool = env.scramble_world(mode)
+                            # world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
+                            # print("The world_converter_bool came back: ", world_to_tsdf_bool)
+                            # map_clear_service()
+                            # map_load_service(tsdf_filename)
+                            # env_reset_counter = 0
+                            # env.unpause()
                             env.pause()
+                            environment_number += 1
+                            if (environment_number > 6):
+                                environment_number = 1
+                            tsdf_filename = '/home/eilefoo/maps/final_testing/tsdf_files/random_env_%i.tsdf' % (environment_number)
 
-                            scrambler_bool = env.scramble_world()
+                            env.scramble_world('set%i' % environment_number)
+                            
                             env_reset_counter = 0
                             env.unpause()
 
                     episode_rew_queue.appendleft(reward_sum)
                     reward_sum = 0.0
                     obs = env.reset()
-                    rospy.sleep(0.5)
+                    rospy.sleep(0.3)
 
             mean_return = np.mean(episode_rew_queue)
             print('Episode done ', 'itr ', itr, 'mean return', mean_return)
@@ -449,15 +473,27 @@ if __name__ == '__main__':
         reward_list = []
         latent_pc_list = []
         num_iterations += 1
+        
+        tsdf_path = "/home/eilefoo/maps/"
+
         if(world_scramble):
-            tsdf_filename = "/home/eilefoo/maps/random_generated_maps/random_1.tsdf"
+            #tsdf_filename = "/home/eilefoo/maps/random_generated_maps/random_1.tsdf" #"/home/eilefoo/maps/random_generated_maps/random_1.tsdf"
+            tsdf_filename = '/home/eilefoo/maps/final_testing/tsdf_files/random_env_%i.tsdf' % (environment_number)
             env.pause()
-            scrambler_bool = env.scramble_world()
-            world_converter_bool = env.world_to_tsdf_converter(tsdf_filename)
             map_clear_service()
+            mode = "set1"
+            env.scramble_world(mode)
+            #world_converter_bool = env.world_to_tsdf_converter(tsdf_filename)
+            map_clear_service()
+            #env.spawn_robot_afar()
             map_load_service(tsdf_filename)
+            #rospy.sleep(0.1)
+            #env.world_to_tsdf_expert_saver(tsdf_filename)
+            #map_clear_service()
+            #map_load_service("/home/eilefoo/test_env.tsdf")#tsdf_expert_filename)#("/home/eilefoo/maps/box2_more_stoned.tsdf")
             env.unpause()
             env_reset_counter = 0
+            rospy.sleep(1)
         # Collect data with expert in first iteration
         obs = env.reset()
         augmented_obs = env.get_augmented_obs()
@@ -465,7 +501,6 @@ if __name__ == '__main__':
         rospy.sleep(0.3)
         print('Collecting data...')
         for i in range(steps):
-            rospy.sleep(0.1)
             counter = 0
             augmented_obs = env.get_augmented_obs()            
             action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)
@@ -496,7 +531,7 @@ if __name__ == '__main__':
             #print("Applied action: ", action*env.action_space.high)
             obs, reward, done, _ = env.step(action * env.action_space.high)
             #print("The distance to goal at this time step: ", obs[0:3])
-            #print("The latent point cloud at this t step:  ", latest_pc)
+            #print("The latent point cloud at this t step:  ", latest_pcl)
             
             reward_list.append(np.array([reward]))
             print("Iteration: ", i)
@@ -504,12 +539,23 @@ if __name__ == '__main__':
             if done:
                 if(world_scramble):
                     env_reset_counter = env_reset_counter +1
-                    if (env_reset_counter > 1): 
+                    if (env_reset_counter >=1): 
+                        # env.pause()
+                        # tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
+                        # scrambler_bool = env.scramble_world(mode)
+                        # world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
+                        # print("The world_converter_bool came back: ", world_to_tsdf_bool)
+                        # map_clear_service()
+                        # map_load_service(tsdf_filename)
+                        # env_reset_counter = 0
+                        # env.unpause()
                         env.pause()
-                        tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-                        scrambler_bool = env.scramble_world()
-                        world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
-                        print("The world_converter_bool came back: ", world_to_tsdf_bool)
+                        environment_number += 1
+                        if (environment_number > 6):
+                            environment_number = 1
+                        tsdf_filename = '/home/eilefoo/maps/final_testing/tsdf_files/random_env_%i.tsdf' % (environment_number)
+
+                        env.scramble_world('set%i' % environment_number)
                         map_clear_service()
                         map_load_service(tsdf_filename)
                         env_reset_counter = 0
@@ -573,108 +619,117 @@ if __name__ == '__main__':
             
             obs = env.reset()
 
+
             reward_sum = 0.0
             rospy.sleep(0.3)
             print("\n\nDagger iteration: ", itr, " of ", dagger_itr)
-            for i in range(steps):
-                #print('obs:', obs)
-                rospy.sleep(0.05)
-                latest_pcl = env.get_latest_pcl_latent()
+            for i in range(1,6):
+                if(world_scramble):
+                    env.pause()
+                    environment_number =1
+                    if (environment_number > 6):
+                        environment_number = 1
+                    tsdf_filename = '/home/eilefoo/maps/final_testing/tsdf_files/random_env_%i.tsdf' % (environment_number)
 
-                concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
-                concatenated_input = np.reshape(concatenated_input,(1,env.total_env_obs))
-                #print("Concatenated input shape: ", np.shape(concatenated_input))
-            
-                #start = timeit.default_timer()
-                action = actor(concatenated_input, training=False)  # assume symmetric action space (low = -high)
-                #print("Actor actions: ", action*env.action_space.high)
-                #stop = timeit.default_timer()
-                #print('Time for actor prediction: ', stop - start)
-                #print('action:', action) # action = [[.]]
+                    env.scramble_world('set%i' % environment_number)
+                    map_clear_service()
+                    map_load_service(tsdf_filename)
+                    env.unpause()
+                obs = env.reset()
 
-                action = tf.clip_by_value(action, -1, 1)
+                obs_list = []
+                augmented_obs_list = []
+                action_list = []
+                reward_list = []
+                latent_pc_list = []
 
-                new_obs, reward, done, info = env.step(action * env.action_space.high)
-                augmented_obs = env.get_augmented_obs()
-                obs = new_obs
-                reward_sum += reward
-                print("Iteration: ", i)
-
-                obs_list.append(np.array([obs]))
-                latent_pc_list.append(np.array([latest_pcl]))
-                augmented_obs_list.append(augmented_obs)
-                action_list.append(np.array(action))
-
-                if done or i == steps-1:
-                    episode_rew_queue.appendleft(reward_sum)
-                    reward_sum = 0
-                    if(world_scramble):
-                        env_reset_counter = env_reset_counter +1
-                        if (env_reset_counter >=1): 
-                            env.pause()
-                            tsdf_filename = '/home/eilefoo/maps/random_generated_maps/random_%i.tsdf' % (i)
-                            scrambler_bool = env.scramble_world()
-                            world_to_tsdf_bool = env.world_to_tsdf_converter(tsdf_filename)
-                            print("The world_converter_bool came back: ", world_to_tsdf_bool)
-                            map_clear_service()
-                            map_load_service(tsdf_filename)
-                            env_reset_counter = 0
-                            env.unpause()
-
-                    #Record 
-                    if info['status'] == "reach goal":
-                        result_statistic[0] +=1
-                    if info['status'] == "collide":
-                        result_statistic[1] +=1
-                    if info['status'] == "timeout":
-                        result_statistic[2] +=1
-
+                for i in range(dagger_steps):
+                    #print('obs:', obs)
                     
-                    
-                    obs = env.reset()
+                    latest_pcl = env.get_latest_pcl_latent()
+
+                    concatenated_input = np.concatenate((obs, latest_pcl), axis=0)
+                    concatenated_input = np.reshape(concatenated_input,(1,env.total_env_obs))
+                    #print("Concatenated input shape: ", np.shape(concatenated_input))
+                
+                    #start = timeit.default_timer()
+                    action = actor(concatenated_input, training=False)  # assume symmetric action space (low = -high)
+                    #print("Actor actions: ", action*env.action_space.high)
+                    #stop = timeit.default_timer()
+                    #print('Time for actor prediction: ', stop - start)
+                    #print('action:', action) # action = [[.]]
+
+                    action = tf.clip_by_value(action, -1, 1)
+
+                    new_obs, reward, done, info = env.step(action * env.action_space.high)
                     augmented_obs = env.get_augmented_obs()
-                    rospy.sleep(0.3) #Wait for pointcloud 
-                    continue
+                    obs = new_obs
+                    reward_sum += reward
+                    print("Iteration: ", i)
 
-            #Saving the Dagger performance statistic
-            logger.info_returns.append(result_statistic)
+                    obs_list.append(np.array([obs]))
+                    latent_pc_list.append(np.array([latest_pcl]))
+                    augmented_obs_list.append(augmented_obs)
+                    action_list.append(np.array(action))
 
-            env.pause()
+                    if done or i == steps-1:
+                        episode_rew_queue.appendleft(reward_sum)
+                        reward_sum = 0
 
-            mean_return = np.mean(episode_rew_queue)
-            print('Episode done ', 'itr ', itr, ',i ', i, 'mean return', mean_return)
-            writer.add_scalar("mean return", mean_return, itr)
-            if (mean_return > max_mean_return):
-                max_mean_return = mean_return
-                actor.save_weights('dagger_pcl_itr' + str(itr) + '.h5')
-            
-            print("\n\nRight before packing data \n\n")
+                        #Record 
+                        if info['status'] == "reach goal":
+                            result_statistic[0] +=1
+                        if info['status'] == "collide":
+                            result_statistic[1] +=1
+                        if info['status'] == "timeout":
+                            result_statistic[2] +=1
 
-            for obs, augmented_obs, pc in zip(obs_list, augmented_obs_list, latent_pc_list):
-                teacher_action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)
-                #print("Teacher action: ", teacher_action)
-                if len(teacher_action) == 0:
-                    print('found no expert path. robot state is: ', augmented_obs[0:3], " goal is: ", obs[0:3])
-                    continue
-                #print("Teacher actions is: ", teacher_action ,"Robot state is: ", augmented_obs[0:3], 'goal state is', obs[0:3])
-                robot_state = obs
-                pcl_feature = pc
-                #print('robot_state:', robot_state)
-                if (len(actions_all) < dagger_buffer_size):
-                    #print("Inside if")
-                    robot_state_all = np.concatenate([robot_state_all, robot_state], axis=0)
-                    latent_pcl_all = np.concatenate([latent_pcl_all, pcl_feature], axis=0)
-                    actions_all = np.concatenate([actions_all, teacher_action], axis=0)
-                else: # buffer is full
+                        
+                        
+                        obs = env.reset()
+                        augmented_obs = env.get_augmented_obs()
+                        rospy.sleep(0.3) #Wait for pointcloud 
+                        continue
 
-                    #print("Inside else")
-                    robot_state_all[dagger_buffer_cnt] = robot_state
-                    latent_pcl_all[dagger_buffer_cnt] = pcl_feature
-                    actions_all[dagger_buffer_cnt] = teacher_action
-                    dagger_buffer_cnt += 1
-                    if (dagger_buffer_cnt == dagger_buffer_size):
-                        print('reset dagger_buffer_cnt')
-                        dagger_buffer_cnt = 0
+                #Saving the Dagger performance statistic
+                logger.info_returns.append(result_statistic)
+
+                env.pause()
+
+                mean_return = np.mean(episode_rew_queue)
+                print('Episode done ', 'itr ', itr, ',i ', i, 'mean return', mean_return)
+                writer.add_scalar("mean return", mean_return, itr)
+                if (mean_return > max_mean_return):
+                    max_mean_return = mean_return
+                    actor.save_weights('dagger_pcl_itr' + str(itr) + '.h5')
+                
+                print("\n\nRight before packing data \n\n")
+
+                for obs, augmented_obs, pc in zip(obs_list, augmented_obs_list, latent_pc_list):
+                    teacher_action = get_teacher_action(planner_service, pid, augmented_obs, env.action_space)
+                    #print("Teacher action: ", teacher_action)
+                    if len(teacher_action) == 0:
+                        print('found no expert path. robot state is: ', augmented_obs[0:3], " goal is: ", obs[0:3])
+                        continue
+                    #print("Teacher actions is: ", teacher_action ,"Robot state is: ", augmented_obs[0:3], 'goal state is', obs[0:3])
+                    robot_state = obs
+                    pcl_feature = pc
+                    #print('robot_state:', robot_state)
+                    if (len(actions_all) < dagger_buffer_size):
+                        #print("Inside if")
+                        robot_state_all = np.concatenate([robot_state_all, robot_state], axis=0)
+                        latent_pcl_all = np.concatenate([latent_pcl_all, pcl_feature], axis=0)
+                        actions_all = np.concatenate([actions_all, teacher_action], axis=0)
+                    else: # buffer is full
+
+                        #print("Inside else")
+                        robot_state_all[dagger_buffer_cnt] = robot_state
+                        latent_pcl_all[dagger_buffer_cnt] = pcl_feature
+                        actions_all[dagger_buffer_cnt] = teacher_action
+                        dagger_buffer_cnt += 1
+                        if (dagger_buffer_cnt == dagger_buffer_size):
+                            print('reset dagger_buffer_cnt')
+                            dagger_buffer_cnt = 0
 
             #Removing the initialization elements
             robot_state_all = np.delete(robot_state_all, 0,0) 
@@ -702,7 +757,7 @@ if __name__ == '__main__':
         if (save_path != None):
             #actor.save('dagger_actor_pcl', include_optimizer=False) # should we include optimizer?
             print('save weights to file:', save_path)
-            actor.save_weights(save_path + '/dagger_pcl_14_05_model128_128_64_30latent_box2_run2.h5')
+            actor.save_weights(save_path + '/dagger_pcl_26_05_model128_128_50latent_final_2.h5')
     
     #Save the dagger performance to file
     logger.save_performance_stats()

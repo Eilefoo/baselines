@@ -73,7 +73,8 @@ class DiagGaussianPdType(PdType):
         self.size = size
         self.matching_fc = _matching_fc(latent_shape, 'pi', self.size, init_scale=init_scale, init_bias=init_bias, activation=activation)
         #self.logstd = tf.Variable(np.zeros((1, self.size)), name='pi/logstd', dtype=tf.float32)
-        self.logstd = tf.Variable(-0.5*np.ones((1, self.size)), name='pi/logstd', dtype=tf.float32)
+        #self.logstd = tf.Variable(-0.5*np.ones((1, self.size)), name='pi/logstd', dtype=tf.float32)
+        self.logstd = tf.Variable(-2*np.ones((1, self.size)), name='pi/logstd', dtype=tf.float32) #Tuneable noise for the agent
 
     def pdclass(self):
         return DiagGaussianPd

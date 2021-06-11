@@ -80,7 +80,6 @@ class Model(tf.Module):
             loss = pg_loss - entropy * self.ent_coef + vf_loss * self.vf_coef
 
         var_list = self.train_model.trainable_variables
-        print("Trenbare variabler for train_model er: ", var_list)
         grads = tape.gradient(loss, var_list)
         if self.max_grad_norm is not None:
             grads, _ = tf.clip_by_global_norm(grads, self.max_grad_norm)

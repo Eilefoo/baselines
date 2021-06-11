@@ -52,13 +52,13 @@ def mlp(num_layers=2, num_hidden=128, activation='relu'):
         x_input = tf.keras.Input(shape=input_shape)
         # h = tf.keras.layers.Flatten(x_input)
         h = x_input
-        for i in range(num_layers):
-          h = tf.keras.layers.Dense(units=num_hidden, kernel_initializer=ortho_init(np.sqrt(2)),
-                                    name='fcletsgoo{}'.format(i+1), activation=activation)(h)
-        h = tf.keras.layers.Dense(units=64, kernel_initializer=ortho_init(np.sqrt(2)),
-                                    name='fcletsgoo3', activation=activation)(h)
-
-        network = tf.keras.Model(inputs=[x_input], outputs=[h])
+        h1 = tf.keras.layers.Dense(units=256, kernel_initializer=ortho_init(np.sqrt(2)),
+                                    name='fcl1', activation='relu')(h)
+        h2 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
+                                    name='fcl2', activation='relu')(h1)
+        # h3 = tf.keras.layers.Dense(units=128, kernel_initializer=ortho_init(np.sqrt(2)),
+        #                             name='fcl3', activation='relu')(h2)
+        network = tf.keras.Model(inputs=[x_input], outputs=[h2])
         return network
 
     return network_fn
